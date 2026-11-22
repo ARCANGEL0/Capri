@@ -2005,6 +2005,9 @@ function agentLabel(id: string): string {
   if (id === 'codex') return 'Codex'
   if (id === 'opencode') return 'OpenCode'
   if (id === 'ghost') return 'Ghost'
+  if (id === 'codewhale') return 'CodeWhale'
+  if (id === 'dsh') return 'DSH'
+  if (id === 'kimi') return 'Kimi Code'
   return id.toUpperCase()
 }
 

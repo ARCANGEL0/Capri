@@ -7,7 +7,7 @@ Capri is a private Even Realities G2 app and phone control center for coding age
 The phone UI has four areas:
 
 - **Devices** shows online Tailscale machines, Capri service health, installed agents, and quick actions.
-- **Sessions** searches and filters saved Claude, Codex, OpenCode, and Ghost sessions across machines. Start a new session with Claude Code, nClaude, Codex, OpenCode, or Ghost; choose a model; send messages; follow live output; and respond to approval prompts.
+- **Sessions** searches and filters saved Claude, Codex, OpenCode, Ghost, CodeWhale, DSH, and Kimi Code sessions across machines. Start a new session with any detected harness; choose a model; send messages; follow live output; and respond to approval prompts.
 - **Terminal** opens an interactive shell on `devbox` or `workstation`. For another tailnet device, configure its Linux or macOS username in Settings and open it through Tailscale SSH. The terminal supports command history, auto-follow, Ctrl-C, Ctrl-D, Tab, Escape, and typed responses to SSH prompts.
 - **Setup** installs and pairs the machine-side `capri-runtime` bridge from a raw GitHub installer. It stores each machine endpoint and token locally on the phone.
 - **Settings** remembers the default machine, agent and model, Claude resume runtime, phone text size, glasses line density, output verbosity, timestamps, and auto-follow. Preferences and terminal command history stay in the phone WebView.

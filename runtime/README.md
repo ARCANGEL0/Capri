@@ -12,7 +12,7 @@ curl -fsSL https://raw.githubusercontent.com/ARCANGEL0/Capri/main/runtime/setup_
 
 The installer downloads the bridge from `Even_G2/server/capri_runtime_server.py`, creates the `capri-runtime` service, configures Tailscale Serve on port `8447`, and prints the endpoint and generated token for Capri Setup.
 
-Run it as the same user who owns the Claude Code, Codex, OpenCode, or Ghost sessions. The agent binaries must already be installed and authenticated for that user.
+Run it as the same user who owns the coding-agent sessions. The agent binaries must already be installed and authenticated for that user.
 
 ## Service names
 
