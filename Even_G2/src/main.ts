@@ -431,8 +431,11 @@ async function bootSplash(): Promise<void> {
     await hud.show({ kind: 'splash', progress: frame / frames, text: phase })
     await new Promise(resolve => setTimeout(resolve, SPLASH_FRAME_MS))
   }
-  await hud.show({ kind: 'splash', progress: 1, text: 'CAPRI ONLINE' })
-  await new Promise(resolve => setTimeout(resolve, SPLASH_HOLD_MS))
+  const holdFrames = Math.ceil(SPLASH_HOLD_MS / SPLASH_FRAME_MS)
+  for (let frame = 0; frame < holdFrames; frame++) {
+    await hud.show({ kind: 'splash', progress: 1 + frame / frames, text: 'CAPRI ONLINE' })
+    await new Promise(resolve => setTimeout(resolve, SPLASH_FRAME_MS))
+  }
   await refreshDevices()
 }
 

@@ -131,10 +131,18 @@ export class Pixels {
     }
   }
 
-  bitmap(rows: readonly string[], x: number, y: number, value: number): void {
+  bitmap(rows: readonly string[], x: number, y: number, value: number, scale = 1): void {
     this.level(value)
+    const cell = Math.max(1, scale)
     rows.forEach((row, dy) => {
-      for (let dx = 0; dx < row.length; dx++) if (row[dx] === '#') this.ctx.fillRect(x + dx, y + dy, 1, 1)
+      for (let dx = 0; dx < row.length; dx++) {
+        if (row[dx] !== '#') continue
+        const left = Math.round(x + dx * cell)
+        const top = Math.round(y + dy * cell)
+        const right = Math.round(x + (dx + 1) * cell)
+        const bottom = Math.round(y + (dy + 1) * cell)
+        this.ctx.fillRect(left, top, Math.max(1, right - left), Math.max(1, bottom - top))
+      }
     })
   }
 

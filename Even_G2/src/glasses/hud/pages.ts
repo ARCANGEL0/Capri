@@ -8,7 +8,7 @@
 // Grey levels 0-15: 0 is off (see-through), 15 is brightest green on hardware.
 
 import { BRIGHT, hudBadge, MID, Pixels, SCREEN_W } from './canvas'
-import { CAPRI_MARK, CAPRI_SHIELD_BITMAP, ICONS, type IconName } from './art'
+import { CAPRI_MARK, CAPRI_SHIELD_BITMAP, CAPRI_SPLASH_LOADER, CAPRI_SPLASH_LOADER_NODE, ICONS, type IconName } from './art'
 
 const RIGHT = SCREEN_W - 4
 const TITLE_PX = 20
@@ -331,49 +331,31 @@ export function drawBox(p: Pixels, name: IconName, title: string, rowIcons: Arra
   p.line(x0, y1, x1, y1, MID, 1)
 }
 
-/** Boot screen art: the Capri shield resolves inside an angular frame. */
-export function drawSplash(p: Pixels, progress: number, left: number, _top: number, size: number, label = 'CAPRI // BOOTING'): void {
-  const share = Math.max(0, Math.min(1, progress))
+export function drawSplash(p: Pixels, progress: number, left: number, _top: number, size: number, _label = 'CAPRI // BOOTING'): void {
+  const motion = Math.max(0, progress)
+  const share = Math.max(0, Math.min(1, motion))
   const cx = left + size / 2
-  const logoSize = 168
+  const logoScale = 1.5
+  const logoSize = CAPRI_SHIELD_BITMAP[0].length * logoScale
   const logoX = Math.round(cx - logoSize / 2)
-  const logoY = 34
-  const frameX = logoX - 18
-  const frameY = logoY - 12
-  const frameW = logoSize + 36
-  const frameH = 178
-  const cut = 16
-  const frame: Array<[number, number]> = [
-    [frameX + cut, frameY], [frameX + frameW - cut, frameY],
-    [frameX + frameW, frameY + cut], [frameX + frameW, frameY + frameH - cut],
-    [frameX + frameW - cut, frameY + frameH], [frameX + cut, frameY + frameH],
-    [frameX, frameY + frameH - cut], [frameX, frameY + cut], [frameX + cut, frameY],
-  ]
-  const edgeProgress = share * (frame.length - 1)
-  const complete = Math.floor(edgeProgress)
-  for (let i = 0; i < complete; i++) p.line(frame[i][0], frame[i][1], frame[i + 1][0], frame[i + 1][1], BRIGHT, 2)
-  if (complete < frame.length - 1) {
-    const amount = edgeProgress - complete
-    const [x0, y0] = frame[complete]
-    const [x1, y1] = frame[complete + 1]
-    p.line(x0, y0, x0 + (x1 - x0) * amount, y0 + (y1 - y0) * amount, BRIGHT, 2)
-  }
-  p.bitmap(CAPRI_SHIELD_BITMAP, Math.round(cx - CAPRI_SHIELD_BITMAP[0].length / 2), 46, BRIGHT)
+  const logoY = 8
+  p.bitmap(CAPRI_SHIELD_BITMAP, logoX, logoY, BRIGHT, logoScale)
 
-  const barX = cx - 108
-  const barY = 226
-  const barW = 216
-  p.line(barX, barY, barX + barW, barY, MID, 1)
-  p.line(barX, barY + 7, barX + barW, barY + 7, MID, 1)
+  const loaderX = cx - 110
+  const loaderY = 214
+  p.svg(CAPRI_SPLASH_LOADER, 120, loaderX, loaderY, 220, MID, 1.8)
+
   const segments = 12
-  const lit = Math.round(segments * share)
+  const segmentWidth = 11
+  const segmentGap = 4
+  const barX = loaderX + 18
+  const barY = loaderY + 31
+  const filled = Math.round(segments * share)
   for (let i = 0; i < segments; i++) {
-    const x = barX + 3 + i * 18
-    p.rect(x, barY + 2, 12, 3, i < lit ? BRIGHT : 3)
+    p.rect(barX + i * (segmentWidth + segmentGap), barY, segmentWidth, 5, i < filled ? BRIGHT : 3)
   }
-  const sweep = barX + 3 + (Math.floor(share * segments) % segments) * 18
-  p.rect(sweep, barY + 1, 12, 5, BRIGHT)
-  p.line(cx - 130, barY + 3, barX - 10, barY + 3, MID, 1)
-  p.line(barX + barW + 10, barY + 3, cx + 130, barY + 3, MID, 1)
-  p.text(p.fit(label, 12, 180), cx, 246, 12, 11, 'center')
+
+  const phase = Math.floor(motion * segments) % segments
+  const nodeX = barX + phase * (segmentWidth + segmentGap) - 1
+  p.svg(CAPRI_SPLASH_LOADER_NODE, 16, nodeX, barY - 6, 18, BRIGHT, 1.5)
 }
