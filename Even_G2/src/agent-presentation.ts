@@ -173,7 +173,7 @@ function isCodeOrToolLine(line: string): boolean {
 }
 
 function isInterfaceChrome(line: string): boolean {
-  return /^(?:[╭╰│┌┐└┘─━═]{1,}|(?:Claude Code|OpenCode|Codex|Ghost)(?:\s|$)|(?:›|❯)\s*(?:for agents|for shortcuts|ask anything|type a message|send a message)|(?:ctrl|cmd|alt|esc|f\d)\s*[+· ]|~\/|\/home\/|[A-Za-z]:\\)/i.test(line)
+  return /^(?:[╭╰│┌┐└┘─━═]{1,}|(?:Claude Code|OpenCode|Codex|Ghost|CodeWhale|DSH|Kimi Code)(?:\s|$)|(?:›|❯)\s*(?:for agents|for shortcuts|ask anything|type a message|send a message)|(?:ctrl|cmd|alt|esc|f\d)\s*[+· ]|~\/|\/home\/|[A-Za-z]:\\)/i.test(line)
     || /^Capri\s*\/\/|^LIVE\s*·\s*TAP TO TALK/i.test(line)
     || /\b(?:to stop response|tap & hold|tokens? used|context left|press enter to send|shift\+tab|ctrl\+c to)/i.test(line)
     || /^(?:[?.·•*]\s*)?(?:thinking|working|ready|waiting for input|waiting for agent output)[.… ]*\d*s?$/i.test(line)

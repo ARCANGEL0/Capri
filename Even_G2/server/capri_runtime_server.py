@@ -45,6 +45,9 @@ AGENT_NAMES = {
     "codex": "Codex",
     "opencode": "OpenCode",
     "ghost": "Ghost",
+    "codewhale": "CodeWhale / DeepSeek",
+    "dsh": "DeepSeek Harness / DSH",
+    "kimi": "Kimi Code",
 }
 AGENT_COMMAND = {
     "claude": "claude",
@@ -52,6 +55,9 @@ AGENT_COMMAND = {
     "codex": "codex",
     "opencode": "opencode",
     "ghost": "ghost",
+    "codewhale": "codewhale",
+    "dsh": "dsh",
+    "kimi": "kimi",
 }
 FALLBACK_MODELS = {
     "claude": ["sonnet", "opus", "haiku", "claude-fable-5"],
@@ -60,6 +66,14 @@ FALLBACK_MODELS = {
         "mistral-large-4", "minimax", "step-5", "laguna",
     ],
     "codex": ["gpt-5-codex", "gpt-5.1-codex", "o3"],
+}
+SESSION_LIST_COMMANDS = {
+    "ghost": (("session", "list", "--format", "json"), ("session", "list", "--json")),
+    "codewhale": (("sessions", "--json"), ("session", "list", "--json"), ("history", "--json")),
+    "dsh": (("sessions", "--json"), ("session", "list", "--json"), ("--profile", "tui", "sessions", "--json")),
+    "kimi": (("sessions", "--json"), ("session", "list", "--json")),
+    "gemini": (("--list-sessions",),),
+    "cline": (("history", "--json", "--limit", "40"), ("history", "--json")),
 }
 MACHINE_TARGETS = {"workstation", "devbox"}
 SESSION_LOCK = threading.RLock()
@@ -239,12 +253,18 @@ def detect_approval(agent, text):
     ghost_prompt = ("approval" in lower or "permission" in lower or "approve" in lower) and (
         "[y/n" in lower or "(y/n" in lower or "allow once" in lower or "yes" in lower and "no" in lower
     )
+    generic_prompt = ("approval" in lower or "permission" in lower or "approve" in lower or "allow" in lower) and (
+        "[y/n" in lower or "(y/n" in lower or "allow once" in lower or "yes" in lower and "no" in lower or "approve" in lower and "deny" in lower
+    )
     matched = {
         "claude": claude_prompt,
         "nclaude": claude_prompt,
         "opencode": opencode_prompt,
         "codex": codex_prompt,
         "ghost": ghost_prompt,
+        "codewhale": generic_prompt,
+        "dsh": generic_prompt,
+        "kimi": generic_prompt,
     }.get(agent, False)
     if not matched:
         return None
@@ -285,7 +305,7 @@ def approval_keystrokes(session, choice):
         return f"{index + 1}\n"
     if session.agent == "codex" and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
-    if session.agent == "ghost" and "[y/n" in (session.approval or {}).get("prompt", "").lower():
+    if session.agent in ("ghost", "codewhale", "dsh", "kimi") and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
     return ("\x1b[B" * index) + "\r"
 
@@ -473,11 +493,137 @@ def opencode_config_models():
     return found[:120]
 
 
+def normalized_session(agent, item, fallback_id="", fallback_cwd=""):
+    if not isinstance(item, dict):
+        return None
+    session_id = str(item.get("id") or item.get("sessionId") or item.get("session_id") or fallback_id)
+    if not session_id:
+        return None
+    title = item.get("title") or item.get("name") or item.get("prompt") or session_id[:10]
+    time_value = item.get("time") if isinstance(item.get("time"), dict) else {}
+    updated = item.get("updatedAt") or item.get("updated_at") or item.get("modified") or item.get("created") or item.get("lastUpdated") or time_value.get("updated") or 0
+    if isinstance(updated, str):
+        try:
+            updated = int(datetime.datetime.fromisoformat(updated.replace("Z", "+00:00")).timestamp() * 1000)
+        except ValueError:
+            updated = 0
+    elif isinstance(updated, (int, float)) and 0 < updated < 100000000000:
+        updated = int(updated * 1000)
+    cwd = str(item.get("cwd") or item.get("workDir") or item.get("workingDirectory") or item.get("directory") or fallback_cwd)
+    return {"id": session_id, "agent": agent, "title": display_title(str(title), session_id[:10]), "updatedAt": int(updated or 0), "cwd": cwd}
+
+
+def record_title(records, fallback):
+    for record in records:
+        if not isinstance(record, dict):
+            continue
+        candidate = record.get("title") or record.get("prompt") or record.get("message") or record.get("content") or record.get("text") or record.get("displayContent")
+        value = message_text(candidate)
+        if value:
+            return display_title(value, fallback)
+    return fallback
+
+
+def kimi_sessions():
+    roots = []
+    configured = os.environ.get("KIMI_CODE_HOME", "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend([HOME / ".kimi-code", HOME / ".kimi"])
+    found = {}
+    for root in roots:
+        index = root / "session_index.jsonl"
+        for item in read_json_lines(index, 512000):
+            session_id = str(item.get("sessionId") or item.get("id") or "")
+            if not session_id:
+                continue
+            session_dir = Path(str(item.get("sessionDir") or ""))
+            if not session_dir.is_absolute():
+                session_dir = root / session_dir
+            state_path = session_dir / "state.json"
+            state = {}
+            try:
+                state = json.loads(state_path.read_text())
+            except (OSError, json.JSONDecodeError):
+                pass
+            merged = {**item, **state, "id": session_id}
+            session = normalized_session("kimi", merged)
+            if session:
+                found[session["id"]] = session
+        for sessions_root in (root / "sessions", root / "data" / "sessions"):
+            if not sessions_root.exists():
+                continue
+            try:
+                state_paths = list(sessions_root.glob("*/*/state.json"))
+            except OSError:
+                state_paths = []
+            for state_path in state_paths[:100]:
+                try:
+                    state = json.loads(state_path.read_text())
+                except (OSError, json.JSONDecodeError):
+                    continue
+                session = normalized_session("kimi", {**state, "id": state.get("sessionId") or state_path.parent.name})
+                if session:
+                    found[session["id"]] = session
+    return sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True)[:40]
+
+
+def transcript_sessions(agent, roots, pattern):
+    found = {}
+    for root in roots:
+        if not root.exists():
+            continue
+        try:
+            paths = list(root.rglob(pattern))
+        except OSError:
+            paths = []
+        for path in paths[:100]:
+            records = read_json_lines(path, 512000)
+            if not records:
+                continue
+            first = records[0] if isinstance(records[0], dict) else {}
+            session_id = str(first.get("sessionId") or first.get("session_id") or first.get("id") or path.stem)
+            metadata = first.get("metadata") if isinstance(first.get("metadata"), dict) else {}
+            cwd = str(first.get("cwd") or first.get("workDir") or metadata.get("cwd") or metadata.get("workDir") or "")
+            updated = 0
+            try:
+                updated = int(path.stat().st_mtime * 1000)
+            except OSError:
+                pass
+            session = {"id": session_id, "agent": agent, "title": record_title(records, session_id[:10]), "updatedAt": updated, "cwd": cwd}
+            found[session_id] = session
+    return sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True)[:40]
+
+
+def codewhale_sessions():
+    root = Path(os.environ.get("CODEWHALE_HOME", str(HOME / ".codewhale"))).expanduser()
+    return transcript_sessions("codewhale", [root], "session*.jsonl*")
+
+
+def dsh_sessions():
+    roots = []
+    configured = os.environ.get("DSH_HOME", "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend([HOME / ".dsh", HOME / ".deepseek", HOME / ".deepseek-harness"])
+    return transcript_sessions("dsh", roots, "session*.jsonl*")
+
+
+def gemini_sessions():
+    roots = []
+    configured = os.environ.get("GEMINI_DATA_DIR", "").strip()
+    if configured:
+        roots.append(Path(configured).expanduser())
+    roots.extend([HOME / ".gemini", HOME / ".cache" / ".gemini"])
+    return transcript_sessions("gemini", [root / "tmp" for root in roots], "session-*.json*")
+
+
 def cli_sessions(agent):
     binary = command_path(agent)
     if not binary:
         return []
-    candidates = [[binary, "session", "list", "--format", "json"], [binary, "session", "list", "--json"]]
+    args_list = SESSION_LIST_COMMANDS.get(agent, (("session", "list", "--format", "json"), ("session", "list", "--json")))
+    candidates = [[binary, *args] for args in args_list]
     for command in candidates:
         try:
             result = subprocess.run(command, capture_output=True, text=True, timeout=8, cwd=HOME)
@@ -525,6 +671,16 @@ def saved_sessions():
         found.extend(opencode_sessions())
     if agents.get("ghost", {}).get("available"):
         found.extend(cli_sessions("ghost"))
+    if agents.get("codewhale", {}).get("available"):
+        found.extend(cli_sessions("codewhale") or codewhale_sessions())
+    if agents.get("dsh", {}).get("available"):
+        found.extend(cli_sessions("dsh") or dsh_sessions())
+    if agents.get("kimi", {}).get("available"):
+        found.extend(cli_sessions("kimi") or kimi_sessions())
+    if agents.get("gemini", {}).get("available"):
+        found.extend(cli_sessions("gemini") or gemini_sessions())
+    if agents.get("cline", {}).get("available"):
+        found.extend(cli_sessions("cline"))
     return sorted(found, key=lambda item: item.get("updatedAt", 0), reverse=True)[:40]
 
 
@@ -727,6 +883,20 @@ def build_agent_command(agent, runtime, model, resume_id):
     elif runner == "ghost":
         if resume_id:
             command.extend(["--session", resume_id])
+    elif runner in ("codewhale", "dsh"):
+        if runner == "codewhale":
+            command.extend(["--mode", "agent"])
+        else:
+            command.extend(["--profile", "tui"])
+        if resume_id:
+            command.extend(["--resume", resume_id])
+        if model:
+            command.extend(["--model", model])
+    elif runner == "kimi":
+        if resume_id:
+            command.extend(["--session", resume_id])
+        if model:
+            command.extend(["--model", model])
     return command, runner
 
 
