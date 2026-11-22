@@ -48,6 +48,7 @@ AGENT_NAMES = {
     "codewhale": "CodeWhale / DeepSeek",
     "dsh": "DeepSeek Harness / DSH",
     "kimi": "Kimi Code",
+    "gemini": "Gemini CLI",
 }
 AGENT_COMMAND = {
     "claude": "claude",
@@ -58,6 +59,7 @@ AGENT_COMMAND = {
     "codewhale": "codewhale",
     "dsh": "dsh",
     "kimi": "kimi",
+    "gemini": "gemini",
 }
 FALLBACK_MODELS = {
     "claude": ["sonnet", "opus", "haiku", "claude-fable-5"],
@@ -265,6 +267,7 @@ def detect_approval(agent, text):
         "codewhale": generic_prompt,
         "dsh": generic_prompt,
         "kimi": generic_prompt,
+        "gemini": generic_prompt,
     }.get(agent, False)
     if not matched:
         return None
@@ -305,7 +308,7 @@ def approval_keystrokes(session, choice):
         return f"{index + 1}\n"
     if session.agent == "codex" and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
-    if session.agent in ("ghost", "codewhale", "dsh", "kimi") and "[y/n" in (session.approval or {}).get("prompt", "").lower():
+    if session.agent in ("ghost", "codewhale", "dsh", "kimi", "gemini") and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
     return ("\x1b[B" * index) + "\r"
 
@@ -611,7 +614,7 @@ def dsh_sessions():
 
 def gemini_sessions():
     roots = []
-    configured = os.environ.get("GEMINI_DATA_DIR", "").strip()
+    configured = os.environ.get("GEMINI_DATA_DIR", "").strip() or os.environ.get("GEMINI_CLI_HOME", "").strip()
     if configured:
         roots.append(Path(configured).expanduser())
     roots.extend([HOME / ".gemini", HOME / ".cache" / ".gemini"])
@@ -895,6 +898,11 @@ def build_agent_command(agent, runtime, model, resume_id):
     elif runner == "kimi":
         if resume_id:
             command.extend(["--session", resume_id])
+        if model:
+            command.extend(["--model", model])
+    elif runner == "gemini":
+        if resume_id:
+            command.extend(["--resume", resume_id])
         if model:
             command.extend(["--model", model])
     return command, runner
