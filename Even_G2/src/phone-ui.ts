@@ -852,7 +852,7 @@ export class PhoneUI {
 }
 
 function agentName(id: string): string {
-  return ({ claude: 'Claude', nclaude: 'nClaude', codex: 'Codex', opencode: 'OpenCode', ghost: 'Ghost', codewhale: 'CodeWhale', dsh: 'DSH', kimi: 'Kimi Code', gemini: 'Gemini CLI', terminal: 'Terminal' } as Record<string, string>)[id] ?? id
+  return ({ claude: 'Claude', nclaude: 'nClaude', codex: 'Codex', opencode: 'OpenCode', ghost: 'Ghost', codewhale: 'CodeWhale', dsh: 'DSH', kimi: 'Kimi Code', gemini: 'Gemini CLI', cline: 'Cline', terminal: 'Terminal' } as Record<string, string>)[id] ?? id
 }
 
 function escapeHtml(value: string): string {

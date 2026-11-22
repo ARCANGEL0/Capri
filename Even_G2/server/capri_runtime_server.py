@@ -49,6 +49,7 @@ AGENT_NAMES = {
     "dsh": "DeepSeek Harness / DSH",
     "kimi": "Kimi Code",
     "gemini": "Gemini CLI",
+    "cline": "Cline",
 }
 AGENT_COMMAND = {
     "claude": "claude",
@@ -60,6 +61,7 @@ AGENT_COMMAND = {
     "dsh": "dsh",
     "kimi": "kimi",
     "gemini": "gemini",
+    "cline": "cline",
 }
 FALLBACK_MODELS = {
     "claude": ["sonnet", "opus", "haiku", "claude-fable-5"],
@@ -268,6 +270,7 @@ def detect_approval(agent, text):
         "dsh": generic_prompt,
         "kimi": generic_prompt,
         "gemini": generic_prompt,
+        "cline": generic_prompt,
     }.get(agent, False)
     if not matched:
         return None
@@ -308,7 +311,7 @@ def approval_keystrokes(session, choice):
         return f"{index + 1}\n"
     if session.agent == "codex" and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
-    if session.agent in ("ghost", "codewhale", "dsh", "kimi", "gemini") and "[y/n" in (session.approval or {}).get("prompt", "").lower():
+    if session.agent in ("ghost", "codewhale", "dsh", "kimi", "gemini", "cline") and "[y/n" in (session.approval or {}).get("prompt", "").lower():
         return "n\n" if choice == "deny" else "y\n"
     return ("\x1b[B" * index) + "\r"
 
@@ -903,6 +906,12 @@ def build_agent_command(agent, runtime, model, resume_id):
     elif runner == "gemini":
         if resume_id:
             command.extend(["--resume", resume_id])
+        if model:
+            command.extend(["--model", model])
+    elif runner == "cline":
+        command.append("--tui")
+        if resume_id:
+            command.extend(["--id", resume_id])
         if model:
             command.extend(["--model", model])
     return command, runner
