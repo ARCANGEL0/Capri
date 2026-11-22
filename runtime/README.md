@@ -10,7 +10,7 @@ On a Tailscale-connected Linux or macOS machine, run:
 curl -fsSL https://raw.githubusercontent.com/ARCANGEL0/Capri/main/runtime/setup_install.sh | bash
 ```
 
-The installer downloads the bridge from `Even_G2/server/capri_runtime_server.py`, creates the `capri-runtime` service, configures Tailscale Serve on port `8447`, and prints the endpoint and generated token for Capri Setup.
+The installer downloads the bridge from `runtime/capri_runtime_server.py`, creates the `capri-runtime` service, configures Tailscale Serve on port `8447`, and prints the endpoint and generated token for Capri Setup.
 
 Run it as the same user who owns the coding-agent sessions. The agent binaries must already be installed and authenticated for that user.
 

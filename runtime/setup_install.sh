@@ -7,7 +7,7 @@ set -euo pipefail
 # └──────────────────────────────────────────────────────────────────────────┘
 
 CAPRI_RAW_BASE="${CAPRI_RAW_BASE:-https://raw.githubusercontent.com/ARCANGEL0/Capri/main}"
-CAPRI_SERVER_URL="${CAPRI_SERVER_URL:-$CAPRI_RAW_BASE/Even_G2/server/capri_runtime_server.py}"
+CAPRI_SERVER_URL="${CAPRI_SERVER_URL:-$CAPRI_RAW_BASE/runtime/capri_runtime_server.py}"
 CAPRI_PORT="${CAPRI_PORT:-7788}"
 CAPRI_SERVE_PORT="${CAPRI_SERVE_PORT:-8447}"
 CAPRI_DEVICE="${CAPRI_DEVICE:-$(hostname -s 2>/dev/null || hostname)}"
