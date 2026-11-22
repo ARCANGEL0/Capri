@@ -2009,6 +2009,7 @@ function agentLabel(id: string): string {
   if (id === 'dsh') return 'DSH'
   if (id === 'kimi') return 'Kimi Code'
   if (id === 'gemini') return 'Gemini CLI'
+  if (id === 'cline') return 'Cline'
   return id.toUpperCase()
 }
 
