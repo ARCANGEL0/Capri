@@ -1,0 +1,22 @@
+[Unit]
+Description=Capri Runtime // authenticated coding session bridge
+After=network-online.target tailscaled.service
+Wants=network-online.target
+Requires=tailscaled.service
+
+[Service]
+Type=simple
+User=@CAPRI_USER@
+Group=@CAPRI_USER@
+WorkingDirectory=@CAPRI_HOME@
+Environment=HOME=@CAPRI_HOME@
+Environment=PATH=@CAPRI_PATH@
+EnvironmentFile=/etc/capri-runtime/capri-runtime.env
+ExecStart=/usr/bin/python3 /opt/capri-runtime/server.py
+Restart=always
+RestartSec=3
+UMask=0077
+LimitNOFILE=8192
+
+[Install]
+WantedBy=multi-user.target
