@@ -153,12 +153,19 @@ export function connectCapriRuntime(
   const menuObject = buildMenu(menu)
   let layout = args.layout
   const first = pageFor(layout, {})
-  const pageReady = bridge.createStartUpPageContainer(new CreateStartUpPageContainer({ ...first, menuObject }))
+  const startup = bridge.createStartUpPageContainer(new CreateStartUpPageContainer({ ...first, menuObject }))
     .then(async (created) => {
       if (created === 0) return true
       return bridge.rebuildPageContainer(new RebuildPageContainer({ ...first, menuObject }))
     })
     .catch(() => false)
+  const pageReady = Promise.race([
+    startup,
+    new Promise<boolean>(resolve => setTimeout(() => {
+      console.warn('capri hud: startup acknowledgement timed out; continuing with rebuild')
+      resolve(true)
+    }, 1000)),
+  ])
 
   let chain: Promise<unknown> = Promise.resolve()
   function enqueue<T>(what: string, work: () => Promise<T>): Promise<T> {

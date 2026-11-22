@@ -7,8 +7,8 @@
 //
 // Grey levels 0-15: 0 is off (see-through), 15 is brightest green on hardware.
 
-import { BRIGHT, hudBadge, hudShield, MID, Pixels, SCREEN_W } from './canvas'
-import { CAPRI_MARK, ICONS, type IconName } from './art'
+import { BRIGHT, hudBadge, MID, Pixels, SCREEN_W } from './canvas'
+import { CAPRI_MARK, CAPRI_SHIELD_BITMAP, ICONS, type IconName } from './art'
 
 const RIGHT = SCREEN_W - 4
 const TITLE_PX = 20
@@ -358,7 +358,7 @@ export function drawSplash(p: Pixels, progress: number, left: number, _top: numb
     const [x1, y1] = frame[complete + 1]
     p.line(x0, y0, x0 + (x1 - x0) * amount, y0 + (y1 - y0) * amount, BRIGHT, 2)
   }
-  if (hudShield) p.image(hudShield, logoX, logoY, logoSize)
+  p.bitmap(CAPRI_SHIELD_BITMAP, Math.round(cx - CAPRI_SHIELD_BITMAP[0].length / 2), 46, BRIGHT)
 
   const barX = cx - 108
   const barY = 226

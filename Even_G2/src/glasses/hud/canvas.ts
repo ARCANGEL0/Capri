@@ -8,8 +8,6 @@
 
 import fontUrl from './fonts/jetbrains-mono-bold.woff2?url'
 import badgeUrl from '../../../icons/custom/CapriBadge.png?url'
-import hexUrl from '../../../icons/custom/CapriHex.png?url'
-import shieldUrl from '../../../icons/custom/CapriShield.png?url'
 
 export const SCREEN_W = 576
 export const SCREEN_H = 288
@@ -21,8 +19,6 @@ export const DIM = 5
 const FONT_FAMILY = 'HudMono'
 let fontReady: Promise<void> | null = null
 export let hudBadge: HTMLImageElement | null = null
-export let hudHex: HTMLImageElement | null = null
-export let hudShield: HTMLImageElement | null = null
 
 function loadImage(url: string, name: string): Promise<HTMLImageElement> {
   return new Promise<HTMLImageElement>((resolve, reject) => {
@@ -34,22 +30,21 @@ function loadImage(url: string, name: string): Promise<HTMLImageElement> {
 }
 
 export async function loadHudAssets(): Promise<void> {
-  if (hudBadge && hudHex && hudShield) return
+  if (hudBadge) return
   hudBadge ??= await loadImage(badgeUrl, 'Capri badge')
-  hudHex ??= await loadImage(hexUrl, 'Capri hexagon')
-  hudShield ??= await loadImage(shieldUrl, 'Capri shield')
 }
 
 export function loadHudFont(): Promise<void> {
   if (!fontReady) {
-    fontReady = (async () => {
+    fontReady = Promise.resolve()
+    void (async () => {
       try {
         const face = new FontFace(FONT_FAMILY, `url(${fontUrl})`, { weight: '700' })
         await Promise.race([
           face.load().then(() => { document.fonts.add(face) }),
           new Promise<void>(resolve => setTimeout(resolve, 500)),
         ])
-    } catch (err) {
+      } catch (err) {
         console.warn('capri hud: font load failed, using monospace', err)
       }
     })()
@@ -89,6 +84,10 @@ export class Pixels {
 
   line(x0: number, y0: number, x1: number, y1: number, value: number, size = 1): void {
     this.level(value)
+    x0 = Math.round(x0)
+    y0 = Math.round(y0)
+    x1 = Math.round(x1)
+    y1 = Math.round(y1)
     const dx = Math.abs(x1 - x0)
     const dy = Math.abs(y1 - y0)
     const sx = x0 < x1 ? 1 : -1
