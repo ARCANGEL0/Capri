@@ -1,0 +1,35 @@
+{
+  "package_id": "com.arcxlo.capri",
+  "edition": "202601",
+  "name": "Capri",
+  "version": "1.1.0",
+  "min_sdk_version": "0.0.16",
+  "entrypoint": "index.html",
+  "permissions": [
+    {
+      "name": "network",
+      "desc": "Connect to authenticated Capri services and configured speech providers.",
+      "whitelist": [
+        "*.ts.net",
+        "*.ts.net:8447",
+        "https://api.openai.com",
+        "https://api.groq.com",
+        "https://api.deepgram.com",
+        "https://api.elevenlabs.io",
+        "https://api.mistral.ai",
+        "https://api.together.xyz",
+        "https://router.huggingface.co",
+        "https://api.lemonfox.ai",
+        "https://api.assemblyai.com",
+        "https://api.gladia.io",
+        "https://asr.api.speechmatics.com",
+        "https://api.arcangelo.net"
+      ]
+    },
+    {
+      "name": "g2-microphone",
+      "desc": "Record voice prompts for coding sessions."
+    }
+  ],
+  "supported_languages": ["en"]
+}

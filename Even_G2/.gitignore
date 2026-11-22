@@ -1,0 +1,6 @@
+dist/
+node_modules/
+*.ehpk
+.env*.local
+server/.env
+server/__pycache__/

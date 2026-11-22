@@ -1,0 +1,21 @@
+{
+  "name": "capri",
+  "private": true,
+  "version": "1.1.0",
+  "type": "module",
+  "description": "Cyberdeck coding agent console for Even Realities G2",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "pack": "npm run build && evenhub pack app.json dist -o capri.ehpk --sdk-ver 0.0.16"
+  },
+  "dependencies": {
+    "@evenrealities/even_hub_sdk": "^0.0.16",
+    "@evenrealities/pretext": "^0.1.4"
+  },
+  "devDependencies": {
+    "@evenrealities/evenhub-cli": "^0.2.0",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.0"
+  }
+}
