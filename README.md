@@ -22,7 +22,7 @@ The machine-side `capri-runtime` service discovers and controls coding harnesses
 
 Capri keeps agent execution and credentials on the target machine. Tailscale provides the private route, and the runtime token authenticates each paired client.
 
-Supported harnesses depend on what is installed on the target machine, including Claude Code, Codex, OpenCode, Ghost, CodeWhale, DeepSeek Harness, Kimi Code, and compatible future harness adapters.
+Supported harnesses depend on what is installed on the target machine, including Claude Code, Codex, OpenCode, Ghost, CodeWhale, DeepSeek Harness, Kimi Code, Gemini CLI, and compatible future harness adapters.
 
 ## Quick start
 
