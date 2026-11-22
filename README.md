@@ -53,24 +53,20 @@ runtime/       Linux/macOS Capri Runtime installer and service templates
 
 The repository is intentionally organized around the shared runtime and separate clients. New clients should reuse the runtime API instead of creating a new machine connector.
 
-## Development
+# Development
 
-Build the current Even G2 client with:
+### Even G2
 
 ```sh
 cd Even_G2
 npm install
-npm run dev
 npm run build
-npm run pack
 ```
-
-`npm run pack` creates an Even Hub package for the G2 client. Its manifest is [`Even_G2/app.json`](./Even_G2/app.json). The package identifier is `com.arcxlo.capri`.
 
 ## Roadmap
 
-- [ ] Add Capri client to the Even G2 smart glasses
+- [x] Add Capri client to the Even G2 smart glasses
 - [ ] Build Capri client for Android & iOS
 - [ ] Make web dashboard
-- [ ] Add more coding-harness adapters
+- [x] Add more coding-harness adapters
 - [ ] Add shared client authentication and device management
