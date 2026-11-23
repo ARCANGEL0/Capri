@@ -45,6 +45,7 @@ function buildScene() {
   const nodes: THREE.Mesh[] = []
   positions.forEach((position, index) => {
     const device = props.devices[index]
+    if (!device) return
     const color = device.status === 'online' ? palette.green : device.status === 'degraded' ? palette.yellow : palette.red
     const node = new THREE.Mesh(
       new THREE.SphereGeometry(0.15, 16, 10),

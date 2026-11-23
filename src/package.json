@@ -7,13 +7,15 @@
     "build": "nuxt build",
     "generate": "nuxt generate",
     "preview": "nuxt preview",
-    "typecheck": "nuxt typecheck"
+    "typecheck": "nuxt prepare && vue-tsc --noEmit -p .nuxt/tsconfig.json"
   },
   "dependencies": {
     "nuxt": "^4.6.4",
     "three": "^0.187.0"
   },
   "devDependencies": {
-    "@types/three": "^0.187.0"
+    "@types/three": "^0.187.0",
+    "typescript": "^5.8.3",
+    "vue-tsc": "^3.3.14"
   }
 }

@@ -6,9 +6,10 @@ import NetworkScene from '../components/NetworkScene.vue'
 import StatusPill from '../components/StatusPill.vue'
 
 const dashboard = useDashboard()
+const { devices, onlineDevices, activeSessions, events, selectedDevice } = dashboard
 const attentionCount = computed(() => dashboard.sessions.value.filter(session => session.state === 'attention').length)
 
-async function selectDevice(device: typeof dashboard.devices.value[number]) {
+async function selectDevice(device: typeof devices.value[number]) {
   dashboard.selectDevice(device.id)
   await navigateTo({ path: '/sessions', query: { device: device.id } })
 }
@@ -25,19 +26,19 @@ async function selectDevice(device: typeof dashboard.devices.value[number]) {
       <div class="intro-actions"><StatusPill tone="green" label="RUNTIME ONLINE" /><NuxtLink class="text-action" to="/setup">Pair a deck <span>↗</span></NuxtLink></div>
     </section>
 
-    <MetricStrip :devices="dashboard.devices.length" :online="dashboard.onlineDevices.length" :active="dashboard.activeSessions.length" :attention="attentionCount" />
+    <MetricStrip :devices="devices.length" :online="onlineDevices.length" :active="activeSessions.length" :attention="attentionCount" />
 
     <section class="dashboard-grid dashboard-grid-primary">
-      <div class="scene-panel"><ClientOnly><NetworkScene :devices="dashboard.devices" /><template #fallback><div class="scene-loading">Loading network map…</div></template></ClientOnly></div>
+      <div class="scene-panel"><ClientOnly><NetworkScene :devices="devices" /><template #fallback><div class="scene-loading">Loading network map…</div></template></ClientOnly></div>
       <div class="activity-panel section-panel">
         <div class="panel-heading"><div><span class="panel-label">SIGNAL LOG</span><h2>Activity</h2></div><NuxtLink class="text-action" to="/sessions">All sessions <span>↗</span></NuxtLink></div>
-        <ActivityFeed :events="dashboard.events" />
+        <ActivityFeed :events="events" />
       </div>
     </section>
 
     <section class="section-panel deck-panel">
       <div class="panel-heading"><div><span class="panel-label">TAILSCALE DEVICES</span><h2>Connected decks</h2><p>Choose a machine to resume work or inspect its sessions.</p></div><NuxtLink class="text-action" to="/setup">Manage pairing <span>↗</span></NuxtLink></div>
-      <DeviceTable :devices="dashboard.devices" :selected-id="dashboard.selectedDevice?.id" @select="selectDevice" />
+      <DeviceTable :devices="devices" :selected-id="selectedDevice?.id" @select="selectDevice" />
     </section>
 
     <section class="dashboard-footnote"><span class="status-pip is-cyan" /><span>Demo data is active. Pair a Capri runtime to replace it with live deck state.</span><NuxtLink to="/setup">Open setup <span>↗</span></NuxtLink></section>
