@@ -15,7 +15,6 @@ import {
   drawApproval,
   drawBox,
   drawDevices,
-  drawKeyboard,
   drawList,
   drawLive,
   drawSplash,
@@ -38,7 +37,6 @@ export type HudView =
   | { kind: 'list'; data: { title: string; page: { index: number; count: number }; rows: Array<{ label: string; value?: string; meta?: string; activity?: string; approval?: boolean }>; selected: number; footer: { left: string; right?: string } } }
   | { kind: 'live'; data: { title: string; page: { index: number; count: number }; lines: string[]; active: boolean; loading?: boolean; loadingFrame?: number; footer: { left: string; right?: string } } }
   | { kind: 'approval'; data: { title: string; page: { index: number; count: number }; prompt: string; options: Array<{ label: string }>; selected: number; footer: { left: string; right?: string } } }
-  | { kind: 'keyboard'; data: { title: string; page: { index: number; count: number }; typed: string; pageIndex: number; pageCount: number; footer: { left: string; right?: string } } }
   | BoxView
   | { kind: 'splash'; progress: number; text: string }
 
@@ -57,7 +55,6 @@ function draw(view: HudView): Pixels {
     case 'list': drawList(p, view.data); break
     case 'live': drawLive(p, view.data); break
     case 'approval': drawApproval(p, view.data); break
-    case 'keyboard': drawKeyboard(p, view.data); break
     case 'box': drawBox(p, view.icon, view.title, view.rowIcons); break
     case 'splash':
       drawSplash(p, view.progress, SPLASH_MARK.x, SPLASH_MARK.y, SPLASH_MARK.width, view.text); break

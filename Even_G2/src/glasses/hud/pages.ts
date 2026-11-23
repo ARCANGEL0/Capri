@@ -258,26 +258,6 @@ export function drawApproval(p: Pixels, d: ApprovalData): void {
   footer(p, '↑↓ NAVIGATE   TAP SELECT')
 }
 
-// ---------- keyboard ----------
-
-export interface KeyboardData {
-  title: string
-  page: { index: number; count: number }
-  typed: string
-  pageIndex: number
-  pageCount: number
-  footer: { left: string; right?: string }
-}
-
-export function drawKeyboard(p: Pixels, d: KeyboardData): void {
-  header(p, d.title, d.page)
-
-  p.text(p.fit(`> ${d.typed || 'type a key'}`, 20, 540), 12, 70, 20, 12)
-  p.text(`page ${d.pageIndex + 1}/${d.pageCount}`, 12, 102, LABEL_PX, 10)
-
-  footer(p, d.footer.left, d.footer.right)
-}
-
 // ---------- Box: frame list and detail screens ----------
 
 export const BOX = { x0: 4, y0: 3, x1: RIGHT, y1: 222 }
