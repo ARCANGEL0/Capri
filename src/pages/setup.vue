@@ -1,18 +1,21 @@
 <script setup lang="ts">
 const config = useRuntimeConfig()
+const runtime = useRuntimeApi()
 const endpoint = ref(String(config.public.runtimeEndpoint || ''))
 const token = ref(String(config.public.runtimeToken || ''))
 const pairingState = ref('NOT PAIRED')
 const installerUrl = 'https://raw.githubusercontent.com/ARCANGEL0/Capri/main/runtime/setup_install.sh'
 
-function savePairing() {
+async function savePairing() {
   const value = endpoint.value.trim().replace(/\/$/, '')
   if (!value || !token.value.trim()) {
     pairingState.value = 'ENDPOINT AND TOKEN REQUIRED'
     return
   }
-  localStorage.setItem('capri.pairing.v1', JSON.stringify({ endpoint: value, token: token.value.trim() }))
-  pairingState.value = 'PAIRING SAVED'
+  runtime.savePairing(value, token.value)
+  pairingState.value = 'CHECKING RUNTIME…'
+  const online = await runtime.check()
+  pairingState.value = online ? 'RUNTIME ONLINE' : 'PAIRING SAVED · OFFLINE'
 }
 
 async function copyInstaller() {
