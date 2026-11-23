@@ -14,7 +14,7 @@ Capri is not tied to one device or interface. Each client talks to the same auth
 
 - **Even G2:** a compact glasses client for live status, readable replies, approvals, and quick input. The current implementation lives in [`Even_G2/`](./Even_G2).
 - **Android and iOS:** planned mobile clients for full session control, setup, terminal access, speech input, and approvals.
-- **Web:** planned dashboard for managing machines, harnesses, sessions, runtime settings, and live conversations from a browser.
+- **Web:** Nuxt and Three.js dashboard for managing machines, harnesses, sessions, runtime settings, and live conversations from a browser. The current client lives in [`src/`](./src).
 
 ## Runtime
 
@@ -49,6 +49,7 @@ After installation, add the printed endpoint and token in the client’s setup s
 ```text
 Even_G2/       Even Realities G2 client and HUD assets
 runtime/       Linux/macOS Capri Runtime installer and service templates
+src/           Nuxt and Three.js web dashboard
 ```
 
 The repository is intentionally organized around the shared runtime and separate clients. New clients should reuse the runtime API instead of creating a new machine connector.
@@ -67,6 +68,6 @@ npm run build
 
 - [x] Add Capri client to the Even G2 smart glasses
 - [ ] Build Capri client for Android & iOS
-- [ ] Make web dashboard
+- [x] Make web dashboard
 - [x] Add more coding-harness adapters
 - [ ] Add shared client authentication and device management
