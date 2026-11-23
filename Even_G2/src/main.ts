@@ -45,6 +45,7 @@ let runtime: CapriRuntime | undefined
 let hud: Hud | undefined
 let unsubscribeHub: (() => void) | undefined
 let lensReady = false
+let runtimeDevicesCache: PhoneRuntimeDevice[] | undefined
 let settings: CapriSettings = readSettings()
 const STT_SETTINGS_KEY = 'capri.stt.settings.v1'
 let sttSettings: SttSettings = readSttSettings()
@@ -73,21 +74,56 @@ function readSttSettings(): SttSettings {
   try { return parseSttSettings(localStorage.getItem(STT_SETTINGS_KEY)) } catch { return parseSttSettings(null) }
 }
 
-function readRuntimeDevices(): PhoneRuntimeDevice[] {
+function parseRuntimeDevices(raw: string | null): PhoneRuntimeDevice[] | undefined {
+  if (!raw) return []
   try {
-    const value = JSON.parse(localStorage.getItem(RUNTIME_DEVICES_KEY) ?? '[]')
+    const value = JSON.parse(raw)
     if (!Array.isArray(value)) return []
     return value.filter((item): item is PhoneRuntimeDevice => Boolean(item) && typeof item.name === 'string' && typeof item.baseUrl === 'string' && typeof item.token === 'string' && item.name.trim() && /^https:\/\//i.test(item.baseUrl) && item.token.trim())
   } catch {
-    return []
+    return undefined
   }
 }
 
+function readBrowserRuntimeDevices(): PhoneRuntimeDevice[] {
+  try { return parseRuntimeDevices(localStorage.getItem(RUNTIME_DEVICES_KEY)) ?? [] } catch { return [] }
+}
+
+function readRuntimeDevices(): PhoneRuntimeDevice[] {
+  return runtimeDevicesCache ?? readBrowserRuntimeDevices()
+}
+
 function writeRuntimeDevices(devicesToWrite: PhoneRuntimeDevice[]): void {
+  runtimeDevicesCache = devicesToWrite
   try {
     localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(devicesToWrite))
     void navigator.storage?.persist?.()
   } catch { /* setup remains available for this launch */ }
+  if (bridge) void bridge.setLocalStorage(RUNTIME_DEVICES_KEY, JSON.stringify(devicesToWrite)).catch(() => undefined)
+}
+
+async function hydrateRuntimeDevices(): Promise<void> {
+  const browserDevices = readBrowserRuntimeDevices()
+  if (!bridge) {
+    runtimeDevicesCache = browserDevices
+    return
+  }
+  try {
+    const persisted = parseRuntimeDevices(await bridge.getLocalStorage(RUNTIME_DEVICES_KEY))
+    if (persisted === undefined) {
+      runtimeDevicesCache = browserDevices
+      return
+    }
+    if (persisted.length || !browserDevices.length) {
+      runtimeDevicesCache = persisted
+      try { localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(persisted)) } catch {}
+      return
+    }
+    runtimeDevicesCache = browserDevices
+    await bridge.setLocalStorage(RUNTIME_DEVICES_KEY, JSON.stringify(browserDevices))
+  } catch {
+    runtimeDevicesCache = browserDevices
+  }
 }
 
 function runtimeHostDevices(): Device[] {
@@ -275,7 +311,6 @@ function updatePhoneUI(immediate = false): void {
   const snapshot: PhoneSnapshot = {
     devices: devices.map((device) => ({
       ...device,
-      capriHost: Boolean(readRuntimeDevices().some((item) => item.name.toLowerCase() === device.name.toLowerCase())),
       sshAvailable: Boolean(!device.available && device.online && settings.sshTargets[device.name] && device.controllerName),
     })),
     selectedDeviceName: settings.defaultDevice,
@@ -364,6 +399,7 @@ function removeRuntimeDevice(name: string): void {
 
 async function boot(): Promise<void> {
   bridge = await waitForEvenAppBridge()
+  await hydrateRuntimeDevices()
   runtime = connectCapriRuntime(bridge, { layout: SPLASH_LAYOUT, menu: MENU })
   if (!runtime) {
     status = 'Lens unavailable'

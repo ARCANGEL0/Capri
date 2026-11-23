@@ -307,8 +307,13 @@ EOF
   ok 'User service online: capri-runtime'
 }
 
+tailscale_self_host() {
+  command -v tailscale >/dev/null 2>&1 || return 0
+  tailscale status --json 2>/dev/null | "$PYTHON_BIN" -c 'import json,sys; d=json.load(sys.stdin); s=d.get("Self",{}); print((s.get("DNSName") or s.get("HostName") or "").rstrip("."))' 2>/dev/null || true
+}
+
 install_cli() {
-  local bin_dir cli_path pairing_dir pairing_file pairing_tmp
+  local bin_dir cli_path pairing_dir pairing_file pairing_tmp pairing_host
   local q_pairing q_scope q_user q_service q_python
   pairing_dir="$USER_HOME/.config/capri-runtime"
   pairing_file="$pairing_dir/pairing.env"
@@ -319,7 +324,8 @@ install_cli() {
   fi
   cli_path="$bin_dir/capri-runtime"
   pairing_tmp="$(mktemp)"
-  printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_DEVICE=%s\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_SERVE_PORT=%s\n' "$RUNTIME_TOKEN" "$CAPRI_DEVICE" "$CAPRI_PORT" "$CAPRI_SERVE_PORT" > "$pairing_tmp"
+  pairing_host="$(tailscale_self_host)"
+  printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_DEVICE=%s\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_SERVE_PORT=%s\nCAPRI_RUNTIME_TAILSCALE_HOST=%s\n' "$RUNTIME_TOKEN" "$CAPRI_DEVICE" "$CAPRI_PORT" "$CAPRI_SERVE_PORT" "$pairing_host" > "$pairing_tmp"
   if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
     run_root install -d -o "$CAPRI_USER" -g "$CAPRI_GROUP" -m 0700 "$pairing_dir"
     run_root install -o "$CAPRI_USER" -g "$CAPRI_GROUP" -m 0600 "$pairing_tmp" "$pairing_file"
@@ -347,9 +353,10 @@ token="\$(value CAPRI_RUNTIME_TOKEN)"
 device="\$(value CAPRI_RUNTIME_DEVICE)"
 port="\$(value CAPRI_RUNTIME_PORT)"
 serve_port="\$(value CAPRI_RUNTIME_SERVE_PORT)"
+saved_host="\$(value CAPRI_RUNTIME_TAILSCALE_HOST)"
 serve_port="\${serve_port:-8447}"
-host=''
-if command -v tailscale >/dev/null 2>&1; then
+host="\$saved_host"
+if [[ -z "\$host" ]] && command -v tailscale >/dev/null 2>&1; then
   host="\$(tailscale status --json 2>/dev/null | \"\$PYTHON_BIN\" -c 'import json,sys; d=json.load(sys.stdin); s=d.get("Self",{}); print((s.get("DNSName") or s.get("HostName") or "").rstrip("."))' 2>/dev/null || true)"
 fi
 endpoint="https://\${host:-<tailscale-hostname>}:\$serve_port"
@@ -381,14 +388,14 @@ else
 fi
 line='────────────────────────────────────────────────────────────────────────────'
 if [[ "\$status" == 'active' || "\$status" == 'running' ]]; then state="\${green}RUNNING\${reset}"; else state="\${red}NOT RUNNING (\$status)\${reset}"; fi
-printf '%s\n' "\${red}╭\$line╮\${reset}"
-printf '│ %-72s │\n' "\${magenta}CAPRI RUNTIME // STATUS\${reset}"
-printf '│ %-72s │\n' "Device:   \$device"
-printf '│ %-72s │\n' "Status:   \$state"
-printf '│ %-72s │\n' "Endpoint: \$endpoint"
-printf '│ %-72s │\n' "Local:    127.0.0.1:\$port"
-printf '│ %-72s │\n' "Token:    \$token"
-printf '%s\n' "\${red}╰\$line╯\${reset}"
+printf '%s\n' "\${red}CAPRI RUNTIME // STATUS\${reset}"
+printf '%s\n' "\${red}\$line\${reset}"
+printf '%s\n' "Device:   \$device"
+printf '%s\n' "Status:   \$state"
+printf '%s\n' "Endpoint: \$endpoint"
+printf '%s\n' "Local:    127.0.0.1:\$port"
+printf '%s\n' "Token:    \$token"
+printf '%s\n' "\${red}\$line\${reset}"
 EOF
   if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
     run_root install -m 0755 "$TEMP_CLI" "$cli_path"
@@ -479,7 +486,7 @@ configure_serve
 
 TAILNET_HOST=''
 if [[ "$CAPRI_SKIP_SERVE" != '1' ]] && command -v tailscale >/dev/null 2>&1; then
-  TAILNET_HOST="$(tailscale status --json 2>/dev/null | "$PYTHON_BIN" -c 'import json,sys; d=json.load(sys.stdin); s=d.get("Self",{}); print((s.get("DNSName") or s.get("HostName") or "").rstrip("."))' 2>/dev/null || true)"
+  TAILNET_HOST="$(tailscale_self_host)"
 fi
 step '04/04' 'Pairing channel ready'
 line
