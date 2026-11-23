@@ -109,12 +109,13 @@ async function hydrateRuntimeDevices(): Promise<void> {
     return
   }
   try {
-    const persisted = parseRuntimeDevices(await bridge.getLocalStorage(RUNTIME_DEVICES_KEY))
+    const raw = await bridge.getLocalStorage(RUNTIME_DEVICES_KEY)
+    const persisted = parseRuntimeDevices(raw)
     if (persisted === undefined) {
       runtimeDevicesCache = browserDevices
       return
     }
-    if (persisted.length || !browserDevices.length) {
+    if (raw) {
       runtimeDevicesCache = persisted
       try { localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(persisted)) } catch {}
       return
