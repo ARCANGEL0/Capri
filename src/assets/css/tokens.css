@@ -1,0 +1,34 @@
+:root {
+  color-scheme: dark;
+  --capri-ink: #08090b;
+  --capri-panel: #101217;
+  --capri-panel-raised: #151820;
+  --capri-panel-hot: #1b1d26;
+  --capri-line: #2a2d38;
+  --capri-line-bright: #555b6e;
+  --capri-red: #ff3355;
+  --capri-red-soft: #ff647c;
+  --capri-red-dim: #7d2337;
+  --capri-cyan: #7ce6ef;
+  --capri-green: #55e69a;
+  --capri-yellow: #ffd166;
+  --capri-text: #f2f1ed;
+  --capri-text-muted: #a3a7b2;
+  --capri-text-dim: #656a78;
+  --capri-radius: 12px;
+  --capri-radius-small: 8px;
+  --capri-shadow: 0 18px 60px rgb(0 0 0 / 0.34);
+  --capri-content: min(1440px, calc(100vw - 48px));
+  --capri-space-1: 4px;
+  --capri-space-2: 8px;
+  --capri-space-3: 12px;
+  --capri-space-4: 16px;
+  --capri-space-5: 20px;
+  --capri-space-6: 24px;
+  --capri-space-7: 32px;
+  --capri-space-8: 40px;
+  --capri-space-9: 56px;
+  --capri-mono: 'DM Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --capri-sans: 'Space Grotesk', Inter, ui-sans-serif, system-ui, sans-serif;
+  --capri-transition: 180ms ease;
+}
