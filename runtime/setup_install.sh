@@ -163,6 +163,7 @@ CAPRI_RUNTIME_TOKEN=$RUNTIME_TOKEN
 CAPRI_RUNTIME_BIND=127.0.0.1
 CAPRI_RUNTIME_PORT=$CAPRI_PORT
 CAPRI_RUNTIME_DEVICE=$CAPRI_DEVICE
+CAPRI_RUNTIME_SERVE_PORT=$CAPRI_SERVE_PORT
 HOME=$USER_HOME
 EOF
   chmod 0600 "$env_file"
@@ -200,7 +201,7 @@ install_system_linux() {
   local env_file="$env_dir/capri-runtime.env" unit='/etc/systemd/system/capri-runtime.service'
   local env_tmp unit_tmp
   env_tmp="$(mktemp)"; unit_tmp="$(mktemp)"
-  printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_BIND=127.0.0.1\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_DEVICE=%s\nHOME=%s\n' "$RUNTIME_TOKEN" "$CAPRI_PORT" "$CAPRI_DEVICE" "$USER_HOME" > "$env_tmp"
+  printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_BIND=127.0.0.1\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_DEVICE=%s\nCAPRI_RUNTIME_SERVE_PORT=%s\nHOME=%s\n' "$RUNTIME_TOKEN" "$CAPRI_PORT" "$CAPRI_DEVICE" "$CAPRI_SERVE_PORT" "$USER_HOME" > "$env_tmp"
   cat > "$unit_tmp" <<EOF
 [Unit]
 Description=Capri Runtime // authenticated coding session bridge
@@ -247,6 +248,7 @@ CAPRI_RUNTIME_TOKEN=$RUNTIME_TOKEN
 CAPRI_RUNTIME_BIND=127.0.0.1
 CAPRI_RUNTIME_PORT=$CAPRI_PORT
 CAPRI_RUNTIME_DEVICE=$CAPRI_DEVICE
+CAPRI_RUNTIME_SERVE_PORT=$CAPRI_SERVE_PORT
 HOME=$USER_HOME
 EOF
   chmod 0600 "$root/capri-runtime.env"
@@ -264,6 +266,7 @@ EOF
     <key>CAPRI_RUNTIME_BIND</key><string>127.0.0.1</string>
     <key>CAPRI_RUNTIME_PORT</key><string>$CAPRI_PORT</string>
     <key>CAPRI_RUNTIME_DEVICE</key><string>$CAPRI_DEVICE</string>
+  <key>CAPRI_RUNTIME_SERVE_PORT</key><string>$CAPRI_SERVE_PORT</string>
   </dict>
   <key>RunAtLoad</key><true/><key>KeepAlive</key><true/>
 </dict></plist>
@@ -271,6 +274,97 @@ EOF
   launchctl bootout "gui/$(id -u)/com.arcxlo.capri-runtime" 2>/dev/null || true
   launchctl bootstrap "gui/$(id -u)" "$plist"
   ok 'User service online: capri-runtime'
+}
+
+install_cli() {
+  local bin_dir cli_path pairing_dir pairing_file pairing_tmp
+  local q_pairing q_scope q_user q_service q_python
+  pairing_dir="$USER_HOME/.config/capri-runtime"
+  pairing_file="$pairing_dir/pairing.env"
+  if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
+    bin_dir='/usr/local/bin'
+  else
+    bin_dir="$USER_HOME/.local/bin"
+  fi
+  cli_path="$bin_dir/capri-runtime"
+  pairing_tmp="$(mktemp)"
+  printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_DEVICE=%s\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_SERVE_PORT=%s\n' "$RUNTIME_TOKEN" "$CAPRI_DEVICE" "$CAPRI_PORT" "$CAPRI_SERVE_PORT" > "$pairing_tmp"
+  if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
+    run_root install -d -o "$CAPRI_USER" -g "$CAPRI_GROUP" -m 0700 "$pairing_dir"
+    run_root install -o "$CAPRI_USER" -g "$CAPRI_GROUP" -m 0600 "$pairing_tmp" "$pairing_file"
+  else
+    mkdir -p "$bin_dir" "$pairing_dir"
+    install -m 0600 "$pairing_tmp" "$pairing_file"
+  fi
+  rm -f "$pairing_tmp"
+  printf -v q_pairing '%q' "$pairing_file"
+  printf -v q_scope '%q' "$CAPRI_SCOPE"
+  printf -v q_user '%q' "$CAPRI_USER"
+  printf -v q_service '%q' 'capri-runtime'
+  printf -v q_python '%q' "$PYTHON_BIN"
+  cat > "$TEMP_CLI" <<EOF
+#!/usr/bin/env bash
+set -u
+PAIRING_FILE=$q_pairing
+CAPRI_SCOPE=$q_scope
+CAPRI_USER=$q_user
+SERVICE_NAME=$q_service
+PYTHON_BIN=$q_python
+
+value() { sed -n "s/^\$1=//p" "\$PAIRING_FILE" 2>/dev/null | tail -n 1; }
+token="\$(value CAPRI_RUNTIME_TOKEN)"
+device="\$(value CAPRI_RUNTIME_DEVICE)"
+port="\$(value CAPRI_RUNTIME_PORT)"
+serve_port="\$(value CAPRI_RUNTIME_SERVE_PORT)"
+serve_port="\${serve_port:-8447}"
+host=''
+if command -v tailscale >/dev/null 2>&1; then
+  host="\$(tailscale status --json 2>/dev/null | \"\$PYTHON_BIN\" -c 'import json,sys; d=json.load(sys.stdin); s=d.get("Self",{}); print((s.get("DNSName") or s.get("HostName") or "").rstrip("."))' 2>/dev/null || true)"
+fi
+endpoint="https://\${host:-<tailscale-hostname>}:\$serve_port"
+status='offline'
+case "\$(uname -s)" in
+  Linux)
+    if [[ "\$CAPRI_SCOPE" == 'system' ]]; then
+      status="\$(systemctl is-active "\$SERVICE_NAME" 2>/dev/null || true)"
+    elif [[ "\$(id -un)" == "\$CAPRI_USER" ]]; then
+      status="\$(systemctl --user is-active "\$SERVICE_NAME" 2>/dev/null || true)"
+    else
+      status="\$(systemctl --user --machine="\${CAPRI_USER}@.host" is-active "\$SERVICE_NAME" 2>/dev/null || true)"
+    fi
+    ;;
+  Darwin)
+    status="\$(launchctl print "gui/\$(id -u)/com.arcxlo.capri-runtime" >/dev/null 2>&1 && printf active || printf inactive)"
+    ;;
+esac
+status="\${status:-offline}"
+if [[ "\${1:-status}" == '--help' || "\${1:-status}" == 'help' ]]; then
+  printf '%s\n' 'Usage: capri-runtime [status]'
+  exit 0
+fi
+
+if [[ -t 1 ]]; then
+  red=\$'\\033[1;31m'; magenta=\$'\\033[1;35m'; cyan=\$'\\033[1;36m'; green=\$'\\033[1;32m'; yellow=\$'\\033[1;33m'; reset=\$'\\033[0m'
+else
+  red=''; magenta=''; cyan=''; green=''; yellow=''; reset=''
+fi
+line='────────────────────────────────────────────────────────────────────────────'
+if [[ "\$status" == 'active' || "\$status" == 'running' ]]; then state="\${green}RUNNING\${reset}"; else state="\${red}NOT RUNNING (\$status)\${reset}"; fi
+printf '%s\n' "\${red}╭\$line╮\${reset}"
+printf '│ %-72s │\n' "\${magenta}CAPRI RUNTIME // STATUS\${reset}"
+printf '│ %-72s │\n' "Device:   \$device"
+printf '│ %-72s │\n' "Status:   \$state"
+printf '│ %-72s │\n' "Endpoint: \$endpoint"
+printf '│ %-72s │\n' "Local:    127.0.0.1:\$port"
+printf '│ %-72s │\n' "Token:    \$token"
+printf '%s\n' "\${red}╰\$line╯\${reset}"
+EOF
+  if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
+    run_root install -m 0755 "$TEMP_CLI" "$cli_path"
+  else
+    install -m 0755 "$TEMP_CLI" "$cli_path"
+  fi
+  ok "Status command installed: $cli_path"
 }
 
 configure_serve() {
@@ -316,7 +410,8 @@ CAPRI_SERVE_PORT="$(prompt_value 'Tailscale HTTPS port' "$CAPRI_SERVE_PORT")"
 ensure_runtime_port
 
 TEMP_SERVER="$(mktemp)"
-trap 'rm -f "$TEMP_SERVER"' EXIT
+TEMP_CLI="$(mktemp)"
+trap 'rm -f "$TEMP_SERVER" "$TEMP_CLI"' EXIT
 step '01/04' 'Fetching the runtime bridge'
 log "$CAPRI_SERVER_URL"
 if ! curl --fail --silent --show-error --location "$CAPRI_SERVER_URL" --output "$TEMP_SERVER"; then
@@ -336,6 +431,7 @@ case "$(uname -s)" in
   Darwin) install_macos ;;
   *) fail 'Capri Runtime currently supports Linux and macOS.' ;;
 esac
+install_cli
 
 step '03/04' 'Connecting the private network lane'
 configure_serve
