@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 import collections
+import concurrent.futures
 import datetime
 import fcntl
 import hmac
@@ -34,6 +35,8 @@ STT_URL = os.environ.get("CAPRI_RUNTIME_STT_URL", "http://127.0.0.1:7790/v1/audi
 STT_TOKEN_FILE = Path(os.environ.get("CAPRI_RUNTIME_STT_TOKEN_FILE", "/home/ubuntu/.config/g2-stt/client-token"))
 MAX_BODY = 12 * 1024 * 1024
 MAX_SESSIONS = 6
+SESSION_SCAN_LIMIT = max(0, int(os.environ.get("CAPRI_SESSION_SCAN_LIMIT", "0")))
+SESSION_COMMAND_TIMEOUT = max(0.5, float(os.environ.get("CAPRI_SESSION_COMMAND_TIMEOUT", "3")))
 MODEL_CACHE = {}
 MODEL_CACHE_PATH = Path(os.environ.get("CAPRI_RUNTIME_MODEL_CACHE", str(HOME / ".cache" / "capri" / "models.json")))
 MODEL_CACHE_TTL = 1800
@@ -81,6 +84,10 @@ SESSION_LIST_COMMANDS = {
 }
 SESSION_LOCK = threading.RLock()
 SESSIONS = {}
+
+
+def session_slice(values):
+    return values if SESSION_SCAN_LIMIT == 0 else values[:SESSION_SCAN_LIMIT]
 
 
 class ManagedSession:
@@ -345,16 +352,35 @@ def read_json_lines(path, max_bytes=65536):
     return records
 
 
+def claude_session_roots():
+    roots = []
+    for variable in ("CLAUDE_CONFIG_DIR", "CLAUDE_HOME"):
+        configured = os.environ.get(variable, "").strip()
+        if configured:
+            roots.append(Path(configured).expanduser() / "projects")
+    roots.extend((HOME / ".claude" / "projects", HOME / ".config" / "claude" / "projects"))
+    unique = []
+    seen = set()
+    for root in roots:
+        key = str(root)
+        if key not in seen:
+            seen.add(key)
+            unique.append(root)
+    return unique
+
+
 def claude_sessions():
-    root = HOME / ".claude" / "projects"
-    found = []
-    if not root.exists():
-        return found
+    found = {}
+    roots = [root for root in claude_session_roots() if root.exists()]
+    if not roots:
+        return []
     paths = []
-    try:
-        paths = sorted(root.rglob("*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True)[:30]
-    except OSError:
-        return found
+    for root in roots:
+        try:
+            paths.extend(root.rglob("*.jsonl"))
+        except OSError:
+            continue
+    paths = session_slice(sorted(paths, key=lambda item: item.stat().st_mtime, reverse=True))
     for path in paths:
         sid = path.stem
         title = ""
@@ -369,8 +395,11 @@ def claude_sessions():
             updated = int(path.stat().st_mtime * 1000)
         except OSError:
             updated = 0
-        found.append({"id": sid, "agent": "claude", "title": display_title(title, sid[:10]), "updatedAt": updated, "cwd": cwd})
-    return found
+        item = {"id": sid, "agent": "claude", "title": display_title(title, sid[:10]), "updatedAt": updated, "cwd": cwd}
+        key = (item["agent"], item["id"])
+        if key not in found or item["updatedAt"] > found[key]["updatedAt"]:
+            found[key] = item
+    return session_slice(sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
 def codex_sessions():
@@ -379,7 +408,7 @@ def codex_sessions():
     if not root.exists():
         return found
     try:
-        paths = sorted(root.rglob("rollout-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True)[:35]
+        paths = session_slice(sorted(root.rglob("rollout-*.jsonl"), key=lambda item: item.stat().st_mtime, reverse=True))
     except OSError:
         return found
     for path in paths:
@@ -404,7 +433,7 @@ def codex_sessions():
         except OSError:
             updated = 0
         found.append({"id": session_id, "agent": "codex", "title": display_title(title, session_id[:10]), "updatedAt": updated, "cwd": cwd})
-    return found
+    return session_slice(sorted(found, key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
 def opencode_sessions():
@@ -415,7 +444,8 @@ def opencode_sessions():
     try:
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2)
         rows = connection.execute(
-            "select id, title, time_updated, directory from session where time_archived is null order by time_updated desc limit 40"
+            "select id, title, time_updated, directory from session where time_archived is null order by time_updated desc"
+            + (f" limit {SESSION_SCAN_LIMIT}" if SESSION_SCAN_LIMIT else "")
         ).fetchall()
         connection.close()
     except (OSError, sqlite3.Error):
@@ -428,7 +458,7 @@ def opencode_sessions():
             "updatedAt": int(updated or 0),
             "cwd": str(cwd or ""),
         })
-    return found
+    return session_slice(sorted(found, key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
 def opencode_model_history():
@@ -576,10 +606,10 @@ def transcript_sessions(agent, roots, pattern):
         if not root.exists():
             continue
         try:
-            paths = list(root.rglob(pattern))
+            paths = session_slice(sorted(root.rglob(pattern), key=lambda item: item.stat().st_mtime, reverse=True))
         except OSError:
             paths = []
-        for path in paths[:100]:
+        for path in paths:
             records = read_json_lines(path, 512000)
             if not records:
                 continue
@@ -594,7 +624,7 @@ def transcript_sessions(agent, roots, pattern):
                 pass
             session = {"id": session_id, "agent": agent, "title": record_title(records, session_id[:10]), "updatedAt": updated, "cwd": cwd}
             found[session_id] = session
-    return sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True)[:40]
+    return session_slice(sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
 def codewhale_sessions():
@@ -626,9 +656,34 @@ def cli_sessions(agent):
         return []
     args_list = SESSION_LIST_COMMANDS.get(agent, (("session", "list", "--format", "json"), ("session", "list", "--json")))
     candidates = [[binary, *args] for args in args_list]
+    deadline = time.monotonic() + SESSION_COMMAND_TIMEOUT
     for command in candidates:
+        remaining = deadline - time.monotonic()
+        if remaining <= 0:
+            break
+        process = None
         try:
-            result = subprocess.run(command, capture_output=True, text=True, timeout=8, cwd=HOME)
+            process = subprocess.Popen(
+                command,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                cwd=HOME,
+                start_new_session=True,
+            )
+            stdout, stderr = process.communicate(timeout=remaining)
+            result = subprocess.CompletedProcess(command, process.returncode, stdout, stderr)
+        except subprocess.TimeoutExpired:
+            if process is not None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except (OSError, ProcessLookupError):
+                    pass
+                try:
+                    process.communicate(timeout=1)
+                except (OSError, subprocess.SubprocessError):
+                    pass
+            break
         except (OSError, subprocess.SubprocessError):
             continue
         if result.returncode != 0:
@@ -658,32 +713,37 @@ def cli_sessions(agent):
             cwd = str(item.get("cwd") or item.get("directory") or "")
             out.append({"id": sid, "agent": agent, "title": display_title(str(title), sid[:10]), "updatedAt": int(updated or 0), "cwd": cwd})
         if out:
-            return out[:35]
+            return session_slice(out)
     return []
 
 
 def saved_sessions():
-    agents = {item["id"]: item for item in available_agents()}
-    found = []
-    if agents.get("claude", {}).get("available"):
-        found.extend(claude_sessions())
-    if agents.get("codex", {}).get("available"):
-        found.extend(codex_sessions())
-    if agents.get("opencode", {}).get("available"):
-        found.extend(opencode_sessions())
-    if agents.get("ghost", {}).get("available"):
-        found.extend(cli_sessions("ghost"))
-    if agents.get("codewhale", {}).get("available"):
-        found.extend(cli_sessions("codewhale") or codewhale_sessions())
-    if agents.get("dsh", {}).get("available"):
-        found.extend(cli_sessions("dsh") or dsh_sessions())
-    if agents.get("kimi", {}).get("available"):
-        found.extend(cli_sessions("kimi") or kimi_sessions())
-    if agents.get("gemini", {}).get("available"):
-        found.extend(cli_sessions("gemini") or gemini_sessions())
-    if agents.get("cline", {}).get("available"):
-        found.extend(cli_sessions("cline"))
-    return sorted(found, key=lambda item: item.get("updatedAt", 0), reverse=True)[:40]
+    jobs = {
+        "claude": claude_sessions,
+        "codex": codex_sessions,
+        "opencode": opencode_sessions,
+        "ghost": lambda: cli_sessions("ghost"),
+        "codewhale": lambda: cli_sessions("codewhale") or codewhale_sessions(),
+        "dsh": lambda: cli_sessions("dsh") or dsh_sessions(),
+        "kimi": lambda: cli_sessions("kimi") or kimi_sessions(),
+        "gemini": lambda: cli_sessions("gemini") or gemini_sessions(),
+        "cline": lambda: cli_sessions("cline"),
+    }
+    found = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(jobs)) as executor:
+        pending = {executor.submit(job): agent for agent, job in jobs.items()}
+        for future in concurrent.futures.as_completed(pending):
+            try:
+                values = future.result()
+            except Exception:
+                values = []
+            for item in values:
+                if not isinstance(item, dict) or not item.get("id"):
+                    continue
+                key = (str(item.get("agent") or pending[future]), str(item["id"]))
+                if key not in found or item.get("updatedAt", 0) > found[key].get("updatedAt", 0):
+                    found[key] = item
+    return session_slice(sorted(found.values(), key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
 def default_workdir():
