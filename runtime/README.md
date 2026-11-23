@@ -39,3 +39,5 @@ capri-runtime
 ```
 
 Use `capri-runtime --help` for the short usage line.
+
+Re-running the installer keeps the existing device label, ports, and pairing token for the selected service scope. Set `CAPRI_TOKEN`, `CAPRI_PORT`, or `CAPRI_DEVICE` when you intentionally want to replace one of them.

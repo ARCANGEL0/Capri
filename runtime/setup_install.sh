@@ -59,6 +59,10 @@ PY
 
 ensure_runtime_port() {
   local suggested='7790'
+  if [[ -n "${CAPRI_EXISTING_PORT:-}" && "$CAPRI_PORT" == "$CAPRI_EXISTING_PORT" ]]; then
+    if [[ "$(uname -s)" == 'Linux' && "$CAPRI_SCOPE" == 'system' && "$(systemctl is-active capri-runtime 2>/dev/null || true)" == 'active' ]]; then return; fi
+    if [[ "$(uname -s)" == 'Linux' && "$CAPRI_SCOPE" == 'user' && "$(systemctl --user is-active capri-runtime 2>/dev/null || true)" == 'active' ]]; then return; fi
+  fi
   if [[ "$CAPRI_PORT" =~ ^[0-9]+$ ]]; then suggested="$((CAPRI_PORT + 1))"; fi
   while ! port_is_available "$CAPRI_PORT"; do
     warn "Runtime port $CAPRI_PORT is already in use."
@@ -139,6 +143,33 @@ user_home() {
     home="$(getent passwd "$CAPRI_USER" | cut -d: -f6)"
   fi
   printf '%s' "${home:-$HOME}"
+}
+
+existing_runtime_value() {
+  local key="$1" path value
+  local -a paths=()
+  if [[ "$(uname -s)" == 'Linux' && "$CAPRI_SCOPE" == 'system' ]]; then
+    paths=(
+      "/etc/capri-runtime/capri-runtime.env"
+    )
+  elif [[ "$(uname -s)" == 'Linux' ]]; then
+    paths=(
+      "$USER_HOME/.config/systemd/user/capri-runtime.env"
+    )
+  else
+    paths=(
+      "$USER_HOME/Library/Application Support/Capri Runtime/capri-runtime.env"
+    )
+  fi
+  for path in "${paths[@]}"; do
+    value=''
+    if [[ -r "$path" ]]; then
+      value="$(sed -n "s/^${key}=//p" "$path" | tail -n 1)"
+    elif [[ "$path" == '/etc/capri-runtime/capri-runtime.env' && "$CAPRI_SCOPE" == 'system' ]]; then
+      value="$(run_root sed -n "s/^${key}=//p" "$path" 2>/dev/null | tail -n 1 || true)"
+    fi
+    if [[ -n "$value" ]]; then printf '%s' "$value"; return; fi
+  done
 }
 
 service_path() {
@@ -404,9 +435,13 @@ prepare_sudo
 USER_HOME="$(user_home)"
 CAPRI_GROUP="$(id -gn "$CAPRI_USER")"
 USER_PATH="$(service_path)"
-CAPRI_DEVICE="$(prompt_value 'Machine label' "$CAPRI_DEVICE")"
-CAPRI_PORT="$(prompt_value 'Runtime port' "$CAPRI_PORT")"
-CAPRI_SERVE_PORT="$(prompt_value 'Tailscale HTTPS port' "$CAPRI_SERVE_PORT")"
+CAPRI_EXISTING_TOKEN="$(existing_runtime_value CAPRI_RUNTIME_TOKEN)"
+CAPRI_EXISTING_DEVICE="$(existing_runtime_value CAPRI_RUNTIME_DEVICE)"
+CAPRI_EXISTING_PORT="$(existing_runtime_value CAPRI_RUNTIME_PORT)"
+CAPRI_EXISTING_SERVE_PORT="$(existing_runtime_value CAPRI_RUNTIME_SERVE_PORT)"
+CAPRI_DEVICE="$(prompt_value 'Machine label' "${CAPRI_EXISTING_DEVICE:-$CAPRI_DEVICE}")"
+CAPRI_PORT="$(prompt_value 'Runtime port' "${CAPRI_EXISTING_PORT:-$CAPRI_PORT}")"
+CAPRI_SERVE_PORT="$(prompt_value 'Tailscale HTTPS port' "${CAPRI_EXISTING_SERVE_PORT:-$CAPRI_SERVE_PORT}")"
 ensure_runtime_port
 
 TEMP_SERVER="$(mktemp)"
@@ -420,11 +455,17 @@ fi
 "$PYTHON_BIN" -m py_compile "$TEMP_SERVER" || fail 'The downloaded runtime bridge failed the Python check.'
 ok 'Runtime bridge downloaded and compiled'
 
-RUNTIME_TOKEN="${CAPRI_TOKEN:-$("$PYTHON_BIN" - <<'PY'
+if [[ -n "${CAPRI_TOKEN:-}" ]]; then
+  RUNTIME_TOKEN="$CAPRI_TOKEN"
+elif [[ -n "${CAPRI_EXISTING_TOKEN:-}" ]]; then
+  RUNTIME_TOKEN="$CAPRI_EXISTING_TOKEN"
+else
+  RUNTIME_TOKEN="$("$PYTHON_BIN" - <<'PY'
 import secrets
 print(secrets.token_urlsafe(40))
 PY
-)}"
+)"
+fi
 step '02/04' "Preparing $CAPRI_SCOPE service for $CAPRI_USER"
 case "$(uname -s)" in
   Linux) if [[ "$CAPRI_SCOPE" == 'system' ]]; then install_system_linux; else install_user_linux; fi ;;
