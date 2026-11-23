@@ -79,7 +79,6 @@ SESSION_LIST_COMMANDS = {
     "gemini": (("--list-sessions",),),
     "cline": (("history", "--json", "--limit", "40"), ("history", "--json")),
 }
-MACHINE_TARGETS = {"workstation", "devbox"}
 SESSION_LOCK = threading.RLock()
 SESSIONS = {}
 
@@ -207,10 +206,7 @@ def tailscale_devices():
         for peer in (status.get("Peer") or {}).values():
             fallback.append(device_record(peer, False))
     except (OSError, subprocess.SubprocessError, ValueError, json.JSONDecodeError):
-        return [
-            {"name": "devbox", "dnsName": "devbox.tailnet.local", "ip": "100.64.0.10", "online": True},
-            {"name": "workstation", "dnsName": "workstation.tailnet.local", "ip": "100.64.0.11", "online": True},
-        ]
+        return []
     for device in fallback:
         device["name"] = device["name"].lower()
     return fallback
@@ -1030,7 +1026,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
         if parsed.path == "/api/v1/health":
             self.send_json(200, {"status": "ok", "device": DEVICE})
         elif parsed.path == "/api/v1/devices":
-            self.send_json(200, {"devices": tailscale_devices(), "controllers": sorted(MACHINE_TARGETS)})
+            self.send_json(200, {"devices": tailscale_devices(), "controllers": [DEVICE]})
         elif parsed.path == "/api/v1/agents":
             self.send_json(200, {"device": DEVICE, "agents": available_agents()})
         elif parsed.path == "/api/v1/sessions":

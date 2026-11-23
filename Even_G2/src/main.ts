@@ -32,6 +32,15 @@ type ApiInit = Omit<RequestInit, 'body'> & { body?: ApiBody; timeoutMs?: number 
 
 const API_TOKEN = import.meta.env.VITE_CAPRI_RUNTIME_TOKEN ?? ''
 const RUNTIME_DEVICES_KEY = 'capri.runtime.devices.v1'
+const PHONE_STORAGE_KEYS = [
+  RUNTIME_DEVICES_KEY,
+  'capri.phone.settings.v1',
+  'capri.phone.commands.v1',
+  'capri.stt.settings.v1',
+  'capri.runtime-sessions.v1',
+  'capri.chat-transcripts.v1',
+  'capri.approval-sessions.v1',
+]
 const LIST_PAGE_SIZE = 5
 const MAX_HISTORY = 500
 const DEFAULT_VISIBLE_CHAT_LINES = 7
@@ -289,6 +298,7 @@ function mountPhoneUI(): void {
     testStt: (next) => void testPhoneStt(next),
     saveRuntimeDevice: (device) => saveRuntimeDevice(device),
     removeRuntimeDevice: (name) => removeRuntimeDevice(name),
+    resetStorage: () => resetLocalStorage(),
   })
   updatePhoneUI(true)
 }
@@ -395,6 +405,24 @@ function removeRuntimeDevice(name: string): void {
     settings = { ...settings, defaultDevice: next[0]?.name ?? '' }
     writeSettings(settings)
   }
+  void refreshDevices()
+}
+
+function resetLocalStorage(): void {
+  try { localStorage.clear() } catch {}
+  runtimeDevicesCache = []
+  if (bridge) void Promise.all(PHONE_STORAGE_KEYS.map((key) => bridge?.setLocalStorage(key, '')))
+  settings = readSettings()
+  sttSettings = readSttSettings()
+  activeDevice = undefined
+  activeTargetDevice = undefined
+  activeSession = undefined
+  activeSessionDevice = undefined
+  activeSavedSessionId = ''
+  sessions = []
+  pendingApproval = undefined
+  status = 'Local storage wiped'
+  updatePhoneUI(true)
   void refreshDevices()
 }
 

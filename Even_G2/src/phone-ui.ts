@@ -107,6 +107,7 @@ export type PhoneActions = {
   testStt: (settings: SttSettings) => void
   saveRuntimeDevice: (device: PhoneRuntimeDevice) => void
   removeRuntimeDevice: (name: string) => void
+  resetStorage: () => void
 }
 
 const SETTINGS_KEY = 'capri.phone.settings.v1'
@@ -172,6 +173,7 @@ export class PhoneUI {
   private setupEndpoint = ''
   private setupToken = ''
   private editingDeviceName = ''
+  private resetConfirm = false
 
   constructor(root: HTMLElement, actions: PhoneActions) {
     this.root = root
@@ -318,7 +320,16 @@ export class PhoneUI {
         this.fillHistory(device, Number(value))
         break
       case 'reset-settings':
-        this.actions.saveSettings({ ...DEFAULT_SETTINGS, defaultDevice: this.deviceName, defaultModels: {} })
+        this.resetConfirm = true
+        this.render()
+        break
+      case 'reset-cancel':
+        this.resetConfirm = false
+        this.render()
+        break
+      case 'reset-confirm':
+        this.resetConfirm = false
+        this.actions.resetStorage()
         break
       case 'save-ssh-target':
         this.saveSshTarget()
@@ -661,7 +672,7 @@ export class PhoneUI {
         <button class="button button-primary button-wide" type="button" data-action="setup-save">${this.editingDeviceName ? 'Save changes' : 'Pair machine'}</button>
       </section>
       <section class="nr-card setup-guide-card"><div class="section-title"><h2>03 · Linked decks</h2><p>Capri checks these endpoints when you refresh the deck list.</p></div>
-        ${state.configuredDevices.length ? `<div class="service-list setup-device-list">${state.configuredDevices.map((device) => `<div class="service-row"><div><strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.baseUrl)}</span></div><div class="service-actions"><button class="text-button" type="button" data-action="setup-edit" data-value="${attr(device.name)}">Edit</button><button class="text-button" type="button" data-action="setup-remove" data-value="${attr(device.name)}">Delete</button></div></div>`).join('')}</div>` : '<p class="field-note">No machines paired yet. The deck list will stay empty until a runtime is added.</p>'}
+        ${state.configuredDevices.length ? `<div class="service-list setup-device-list">${state.configuredDevices.map((device) => `<div class="service-row"><div><strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.baseUrl)}</span></div><div class="service-actions">${iconButton('setup-edit', device.name, `Edit ${device.name}`, 'edit')}${iconButton('setup-remove', device.name, `Delete ${device.name}`, 'delete')}</div></div>`).join('')}</div>` : '<p class="field-note">No machines paired yet. The deck list will stay empty until a runtime is added.</p>'}
       </section>
       <footer class="phone-footer">CAPRI // SETUP CHANNEL · TAILSCALE ONLY</footer>`
   }
@@ -689,7 +700,7 @@ export class PhoneUI {
       <div class="device-actions">
         <button class="button button-primary" type="button" data-action="jack-in" data-device="${attr(device.name)}" ${device.available ? '' : 'disabled'}>Open sessions</button>
         <button class="button" type="button" data-action="terminal" data-device="${attr(device.name)}" ${canTerminal ? '' : 'disabled'}>${device.sshAvailable && !device.available ? 'SSH shell' : 'Terminal'}</button>
-        ${device.capriHost ? `<button class="text-button" type="button" data-action="setup-edit" data-value="${attr(configuredName)}">Edit</button><button class="text-button" type="button" data-action="setup-remove" data-value="${attr(configuredName)}">Delete</button>` : ''}
+        ${device.capriHost ? `${iconButton('setup-edit', configuredName, `Edit ${configuredName}`, 'edit')}${iconButton('setup-remove', configuredName, `Delete ${configuredName}`, 'delete')}` : ''}
       </div>
     </article>`
   }
@@ -797,8 +808,13 @@ export class PhoneUI {
       </section>
       <section class="nr-card"><div class="section-title"><h2>Connected services</h2><p>Agent sessions need the Capri service on the deck.</p></div><div class="service-list">${state.devices.map((device) => `<div class="service-row"><div><strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.ip)}</span></div><span class="device-status${device.available || device.sshAvailable ? ' is-online' : ''}"><span class="status-dot"></span>${device.available ? 'Capri ready' : device.sshAvailable ? 'SSH terminal ready' : device.online ? 'No access configured' : 'Unavailable'}</span></div>`).join('')}</div></section>
       ${this.renderSshSettings(state)}
-      <section class="nr-card"><div class="section-title"><h2>Local data</h2><p>Preferences and terminal command history are stored on this phone.</p></div><button class="button" type="button" data-action="reset-settings">Reset preferences</button></section>
-      <footer class="phone-footer">Capri · Private beta · Settings stay on this phone</footer>`
+      <section class="nr-card"><div class="section-title"><h2>Local data</h2><p>Preferences, pairing, and terminal command history are stored on this phone.</p></div><button class="button button-danger" type="button" data-action="reset-settings">Reset local data</button></section>
+      <footer class="phone-footer">Capri · Private beta · Settings stay on this phone</footer>
+      ${this.resetConfirm ? this.renderResetDialog() : ''}`
+  }
+
+  private renderResetDialog(): string {
+    return `<div class="dialog-backdrop" role="presentation"><section class="danger-dialog" role="alertdialog" aria-modal="true" aria-labelledby="reset-dialog-title"><div class="danger-dialog-mark">!</div><h2 id="reset-dialog-title">Warning!</h2><p>This will erase all local data and paired devices from Capri on this phone.</p><div class="dialog-actions"><button class="button button-danger" type="button" data-action="reset-confirm">Wipe storage</button><button class="button" type="button" data-action="reset-cancel">Cancel</button></div></section></div>`
   }
 
   private renderToggle(action: string, title: string, description: string, checked: boolean): string {
@@ -885,6 +901,13 @@ function escapeHtml(value: string): string {
 
 function attr(value: string): string {
   return escapeHtml(value)
+}
+
+function iconButton(action: string, value: string, label: string, icon: 'edit' | 'delete'): string {
+  const svg = icon === 'edit'
+    ? '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M4 20h4L19 9l-4-4L4 16v4Z"/><path d="m13 6 4 4"/></svg>'
+    : '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="square" stroke-linejoin="miter" aria-hidden="true"><path d="M5 7h14"/><path d="M10 11v6M14 11v6"/><path d="M9 7V4h6v3"/><path d="m7 7 1 13h8l1-13"/></svg>'
+  return `<button class="action-icon action-icon-${icon}" type="button" data-action="${attr(action)}" data-value="${attr(value)}" aria-label="${attr(label)}" title="${attr(label)}">${svg}</button>`
 }
 
 function serviceNet(state: PhoneSnapshot): number {
