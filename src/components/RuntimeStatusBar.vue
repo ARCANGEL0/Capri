@@ -2,6 +2,7 @@
 const runtime = useRuntimeApi()
 const label = computed(() => runtime.status.value === 'online' ? 'RUNTIME ONLINE' : runtime.status.value === 'checking' ? 'CHECKING RUNTIME' : runtime.status.value === 'offline' ? 'RUNTIME OFFLINE' : 'DEMO RUNTIME')
 const tone = computed(() => runtime.status.value === 'online' ? 'is-green' : runtime.status.value === 'offline' ? 'is-red' : runtime.status.value === 'checking' ? 'is-yellow' : 'is-cyan')
+const title = computed(() => runtime.lastChecked.value ? `Checked ${runtime.lastChecked.value}` : 'Check runtime connection')
 
 onMounted(() => {
   runtime.loadPairing()
@@ -10,7 +11,7 @@ onMounted(() => {
 </script>
 
 <template>
-  <button class="runtime-status" type="button" :title="runtime.lastChecked ? `Checked ${runtime.lastChecked}` : 'Check runtime connection'" @click="runtime.check">
+  <button class="runtime-status" type="button" :title="title" @click="runtime.check">
     <span class="status-pip" :class="tone" />{{ label }}
   </button>
 </template>
