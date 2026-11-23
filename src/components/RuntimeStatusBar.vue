@@ -9,9 +9,11 @@ onMounted(() => {
 })
 </script>
 
-<button class="runtime-status" type="button" :title="runtime.lastChecked ? `Checked ${runtime.lastChecked}` : 'Check runtime connection'" @click="runtime.check">
-  <span class="status-pip" :class="tone" />{{ label }}
-</button>
+<template>
+  <button class="runtime-status" type="button" :title="runtime.lastChecked ? `Checked ${runtime.lastChecked}` : 'Check runtime connection'" @click="runtime.check">
+    <span class="status-pip" :class="tone" />{{ label }}
+  </button>
+</template>
 
 <style scoped>
 .runtime-status { display: inline-flex; align-items: center; gap: 7px; padding: 0; border: 0; color: var(--capri-cyan); background: transparent; font-family: var(--capri-mono); font-size: 10px; letter-spacing: .08em; }
