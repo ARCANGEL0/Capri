@@ -18,6 +18,7 @@ export type PhoneDevice = {
   online: boolean
   baseUrl: string
   available: boolean
+  checking?: boolean
   capriHost?: boolean
   configuredName?: string
   sshAvailable?: boolean
@@ -168,6 +169,7 @@ export class PhoneUI {
   private historyIndex = -1
   private pendingRender?: number
   private renderQueued = false
+  private renderedTab?: PhoneTab
   private sttDraft: SttSettings = { ...EMPTY_STT }
   private setupName = ''
   private setupEndpoint = ''
@@ -610,6 +612,8 @@ export class PhoneUI {
   private render(): void {
     const state = this.snapshot
     if (!state) return
+    const sameTab = this.renderedTab === this.tab
+    const previousMainScroll = sameTab ? this.root.querySelector<HTMLElement>('.phone-main')?.scrollTop ?? 0 : 0
     const previousTerminalScroll = this.root.querySelector<HTMLElement>('.terminal-output')?.scrollTop ?? 0
     const previousFeedScroll = this.root.querySelector<HTMLElement>('.chat-feed')?.scrollTop ?? 0
     const previousGlassesScroll = this.root.querySelector<HTMLElement>('.glasses-screen-copy')?.scrollTop ?? 0
@@ -635,7 +639,8 @@ export class PhoneUI {
           ${this.renderTab('settings', 'SETTINGS')}
         </nav>
       </div>`
-    this.restoreScroll(previousTerminalScroll, previousFeedScroll, previousGlassesScroll)
+    this.renderedTab = this.tab
+    this.restoreScroll(previousMainScroll, previousTerminalScroll, previousFeedScroll, previousGlassesScroll)
   }
 
   private renderTab(tab: PhoneTab, label: string): string {
@@ -689,7 +694,7 @@ export class PhoneUI {
   private renderDeviceCard(device: PhoneDevice, state: PhoneSnapshot): string {
     const agents = (state.agentsByDevice[device.name] ?? []).filter((agent) => agent.available)
     const canTerminal = device.available || Boolean(device.sshAvailable)
-    const statusLabel = device.available ? 'Online' : device.sshAvailable ? `SSH via ${device.controllerName ?? 'Capri'}` : device.online ? 'Online · not configured' : 'Offline'
+    const statusLabel = device.checking ? 'Checking link' : device.available ? 'Online' : device.sshAvailable ? `SSH via ${device.controllerName ?? 'Capri'}` : device.online ? 'Online · not configured' : 'Offline'
     const configuredName = device.configuredName ?? device.name
     return `<article class="artifact deck-card${device.online ? '' : ' is-offline'}">
       <div class="artifact-header"><span>${escapeHtml(device.name)}</span><span class="deck-state ${device.online ? 'is-online' : 'is-offline'}"><span class="status-dot"></span>${escapeHtml(statusLabel)}</span></div>
@@ -874,11 +879,13 @@ export class PhoneUI {
     }).join('') ?? ''
   }
 
-  private restoreScroll(previousTerminalScroll: number, previousFeedScroll: number, previousGlassesScroll: number): void {
+  private restoreScroll(previousMainScroll: number, previousTerminalScroll: number, previousFeedScroll: number, previousGlassesScroll: number): void {
     const settings = this.snapshot?.settings
+    const main = this.root.querySelector<HTMLElement>('.phone-main')
     const terminal = this.root.querySelector<HTMLElement>('.terminal-output')
     const feed = this.root.querySelector<HTMLElement>('.chat-feed')
     const glasses = this.root.querySelector<HTMLElement>('.glasses-screen-copy')
+    if (main) main.scrollTop = Math.min(previousMainScroll, main.scrollHeight)
     if (settings?.autoScroll) {
       if (terminal) terminal.scrollTop = terminal.scrollHeight
       if (feed) feed.scrollTop = feed.scrollHeight

@@ -44,7 +44,7 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .header-actions { display: flex; align-items: center; gap: 10px; }
 .header-state { color: var(--mint); font-family: "JetBrains Mono", monospace; font-size: 9px; letter-spacing: .1em; }
 
-.phone-main { flex: 1; min-height: 0; overflow-y: auto; padding: 22px clamp(16px, 4vw, 34px) 42px; scrollbar-color: var(--red-soft) transparent; scrollbar-width: thin; }
+.phone-main { flex: 1; min-height: 0; overflow-y: auto; padding: 22px clamp(16px, 4vw, 34px) 42px; overscroll-behavior-y: contain; -webkit-overflow-scrolling: touch; scrollbar-color: var(--red-soft) transparent; scrollbar-width: thin; }
 .phone-tabs { position: relative; z-index: 3; display: grid; grid-template-columns: repeat(5, 1fr); flex: 0 0 auto; border-top: 1px solid var(--line); background: #0c0b0d; }
 .tab-button { position: relative; min-height: 58px; border: 0; border-right: 1px solid var(--line-soft); background: transparent; color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 10px; letter-spacing: .12em; text-transform: uppercase; }
 .tab-button:last-child { border-right: 0; }

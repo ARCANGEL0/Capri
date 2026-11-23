@@ -21,7 +21,7 @@ import {
 import './style.css'
 
 type Screen = 'devices' | 'session-choice' | 'new_agent' | 'new_session' | 'resume' | 'runtimes' | 'chat' | 'review' | 'approval' | 'terminal' | 'more'
-type Device = { name: string; ip: string; sshHost?: string; os?: string; sshEligible?: boolean; online: boolean; baseUrl: string; token?: string; available: boolean; capriHost?: boolean; configuredName?: string; sshAvailable?: boolean; controllerName?: string }
+type Device = { name: string; ip: string; sshHost?: string; os?: string; sshEligible?: boolean; online: boolean; baseUrl: string; token?: string; available: boolean; checking?: boolean; capriHost?: boolean; configuredName?: string; sshAvailable?: boolean; controllerName?: string }
 type Agent = { id: string; name: string; available: boolean; runtimes?: string[] }
 type SessionInfo = { id: string; agent: string; title: string; updatedAt?: number; runtime?: string; cwd?: string; needsApproval?: boolean }
 type Approval = { agent: string; prompt: string; options: Array<{ id: string; label: string }> }
@@ -55,6 +55,7 @@ let hud: Hud | undefined
 let unsubscribeHub: (() => void) | undefined
 let lensReady = false
 let runtimeDevicesCache: PhoneRuntimeDevice[] | undefined
+let runtimeDevicesRevision = 0
 let settings: CapriSettings = readSettings()
 const STT_SETTINGS_KEY = 'capri.stt.settings.v1'
 let sttSettings: SttSettings = readSttSettings()
@@ -103,6 +104,7 @@ function readRuntimeDevices(): PhoneRuntimeDevice[] {
 }
 
 function writeRuntimeDevices(devicesToWrite: PhoneRuntimeDevice[]): void {
+  runtimeDevicesRevision += 1
   runtimeDevicesCache = devicesToWrite
   try {
     localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(devicesToWrite))
@@ -113,26 +115,28 @@ function writeRuntimeDevices(devicesToWrite: PhoneRuntimeDevice[]): void {
 
 async function hydrateRuntimeDevices(): Promise<void> {
   const browserDevices = readBrowserRuntimeDevices()
+  const revision = runtimeDevicesRevision
   if (!bridge) {
     runtimeDevicesCache = browserDevices
     return
   }
   try {
     const raw = await bridge.getLocalStorage(RUNTIME_DEVICES_KEY)
+    if (revision !== runtimeDevicesRevision) return
     const persisted = parseRuntimeDevices(raw)
     if (persisted === undefined) {
       runtimeDevicesCache = browserDevices
       return
     }
-    if (raw) {
+    if (persisted.length) {
       runtimeDevicesCache = persisted
       try { localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(persisted)) } catch {}
       return
     }
     runtimeDevicesCache = browserDevices
-    await bridge.setLocalStorage(RUNTIME_DEVICES_KEY, JSON.stringify(browserDevices))
+    void bridge.setLocalStorage(RUNTIME_DEVICES_KEY, JSON.stringify(browserDevices)).catch(() => undefined)
   } catch {
-    runtimeDevicesCache = browserDevices
+    if (revision === runtimeDevicesRevision) runtimeDevicesCache = browserDevices
   }
 }
 
@@ -144,8 +148,17 @@ function runtimeHostDevices(): Device[] {
     token: item.token,
     online: false,
     available: false,
+    checking: true,
     capriHost: true,
   }))
+}
+
+function primeConfiguredDevices(): void {
+  const hosts = runtimeHostDevices()
+  devices = hosts
+  rows = hosts.map((host) => ({ label: `${host.name}  /  ${host.ip}   ...`, action: 'device', value: host.name }))
+  status = hosts.length ? 'CHECKING DECKS' : 'SETUP REQUIRED  ·  PAIR A RUNTIME'
+  updatePhoneUI(true)
 }
 
 function readRuntimeSession(device: string, savedId: string): string {
@@ -276,6 +289,8 @@ let sttStatus = ''
 let sttTesting = false
 
 mountPhoneUI()
+runtimeDevicesCache = readBrowserRuntimeDevices()
+primeConfiguredDevices()
 void boot().catch((error: unknown) => console.error('Capri startup failed', error))
 
 function mountPhoneUI(): void {
@@ -409,6 +424,7 @@ function removeRuntimeDevice(name: string): void {
 }
 
 function resetLocalStorage(): void {
+  runtimeDevicesRevision += 1
   try { localStorage.clear() } catch {}
   runtimeDevicesCache = []
   if (bridge) void Promise.all(PHONE_STORAGE_KEYS.map((key) => bridge?.setLocalStorage(key, '')))
@@ -428,7 +444,11 @@ function resetLocalStorage(): void {
 
 async function boot(): Promise<void> {
   bridge = await waitForEvenAppBridge()
-  await hydrateRuntimeDevices()
+  runtimeDevicesCache = readBrowserRuntimeDevices()
+  primeConfiguredDevices()
+  void hydrateRuntimeDevices().then(() => {
+    primeConfiguredDevices()
+  })
   runtime = connectCapriRuntime(bridge, { layout: SPLASH_LAYOUT, menu: MENU })
   if (!runtime) {
     status = 'Lens unavailable'
@@ -596,7 +616,9 @@ async function refreshDevices(): Promise<void> {
     return
   }
   status = 'Scanning the net...'
+  devices = hosts
   rows = hosts.map((host) => ({ label: `${host.name}  /  ${host.ip}   ···`, action: 'device', value: host.name }))
+  updatePhoneUI(true)
   await redraw()
   const probes = await Promise.all(hosts.map(async (host) => {
     try {
@@ -639,6 +661,7 @@ async function refreshDevices(): Promise<void> {
         baseUrl: host?.baseUrl ?? controller?.baseUrl ?? '',
         token: host?.token ?? controller?.token,
         available: Boolean(host && peer.online && hostAvailability.get(host.name)),
+        checking: false,
         capriHost: Boolean(host),
         configuredName: host?.name,
         controllerName: host ? undefined : controller?.name,
