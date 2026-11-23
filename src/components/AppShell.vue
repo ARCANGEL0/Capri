@@ -1,5 +1,6 @@
 <script setup lang="ts">
 import IconGlyph from './IconGlyph.vue'
+import RuntimeStatusBar from './RuntimeStatusBar.vue'
 import type { NavItem } from '../types/dashboard'
 
 const route = useRoute()
@@ -47,7 +48,7 @@ function isActive(item: NavItem) {
       <header class="topbar">
         <div class="topbar-route"><span class="route-slash">/</span><span>{{ navItems.find(item => isActive(item))?.label ?? 'Overview' }}</span></div>
         <div class="topbar-right">
-          <span class="network-state"><span class="status-pip is-green" />TAILSCALE LINKED</span>
+          <RuntimeStatusBar />
           <button class="icon-button" type="button" aria-label="Notifications"><IconGlyph name="bell" :size="17" /><span class="notification-dot" /></button>
           <button class="avatar-button" type="button" aria-label="Open account menu">HA</button>
         </div>
