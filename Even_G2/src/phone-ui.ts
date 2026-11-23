@@ -19,6 +19,7 @@ export type PhoneDevice = {
   baseUrl: string
   available: boolean
   capriHost?: boolean
+  configuredName?: string
   sshAvailable?: boolean
   controllerName?: string
 }
@@ -170,6 +171,7 @@ export class PhoneUI {
   private setupName = ''
   private setupEndpoint = ''
   private setupToken = ''
+  private editingDeviceName = ''
 
   constructor(root: HTMLElement, actions: PhoneActions) {
     this.root = root
@@ -332,14 +334,34 @@ export class PhoneUI {
         break
       case 'setup-save':
         if (this.setupName.trim() && this.setupEndpoint.trim() && this.setupToken.trim()) {
+          if (this.editingDeviceName && this.editingDeviceName.toLowerCase() !== this.setupName.trim().toLowerCase()) this.actions.removeRuntimeDevice(this.editingDeviceName)
           this.actions.saveRuntimeDevice({ name: this.setupName.trim(), baseUrl: this.setupEndpoint.trim().replace(/\/$/, ''), token: this.setupToken.trim() })
           this.setupName = ''
           this.setupEndpoint = ''
           this.setupToken = ''
+          this.editingDeviceName = ''
         }
         break
+      case 'setup-edit': {
+        const configured = this.snapshot?.configuredDevices.find((item) => item.name === value)
+        if (configured) {
+          this.editingDeviceName = configured.name
+          this.setupName = configured.name
+          this.setupEndpoint = configured.baseUrl
+          this.setupToken = configured.token
+          this.tab = 'setup'
+          this.render()
+        }
+        break
+      }
       case 'setup-remove':
         this.actions.removeRuntimeDevice(value)
+        if (this.editingDeviceName === value) {
+          this.editingDeviceName = ''
+          this.setupName = ''
+          this.setupEndpoint = ''
+          this.setupToken = ''
+        }
         break
     }
   }
@@ -636,10 +658,10 @@ export class PhoneUI {
         <label class="field-label">Machine name<input class="search-field" data-action="setup-name" data-editor="1" value="${attr(this.setupName)}" placeholder="for example, studio-mac" autocapitalize="none" spellcheck="false"></label>
         <label class="field-label">Tailscale HTTPS endpoint<input class="search-field" data-action="setup-endpoint" data-editor="1" value="${attr(this.setupEndpoint)}" placeholder="https://machine.tailnet.ts.net:8447" autocapitalize="none" spellcheck="false"></label>
         <label class="field-label">Runtime token<input class="search-field" type="password" data-action="setup-token" data-editor="1" value="${attr(this.setupToken)}" placeholder="Paste the token printed by the installer" autocomplete="off" spellcheck="false"></label>
-        <button class="button button-primary button-wide" type="button" data-action="setup-save">Pair machine</button>
+        <button class="button button-primary button-wide" type="button" data-action="setup-save">${this.editingDeviceName ? 'Save changes' : 'Pair machine'}</button>
       </section>
       <section class="nr-card setup-guide-card"><div class="section-title"><h2>03 · Linked decks</h2><p>Capri checks these endpoints when you refresh the deck list.</p></div>
-        ${state.configuredDevices.length ? `<div class="service-list setup-device-list">${state.configuredDevices.map((device) => `<div class="service-row"><div><strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.baseUrl)}</span></div><button class="text-button" type="button" data-action="setup-remove" data-value="${attr(device.name)}">Remove</button></div>`).join('')}</div>` : '<p class="field-note">No machines paired yet. The deck list will stay empty until a runtime is added.</p>'}
+        ${state.configuredDevices.length ? `<div class="service-list setup-device-list">${state.configuredDevices.map((device) => `<div class="service-row"><div><strong>${escapeHtml(device.name)}</strong><span>${escapeHtml(device.baseUrl)}</span></div><div class="service-actions"><button class="text-button" type="button" data-action="setup-edit" data-value="${attr(device.name)}">Edit</button><button class="text-button" type="button" data-action="setup-remove" data-value="${attr(device.name)}">Delete</button></div></div>`).join('')}</div>` : '<p class="field-note">No machines paired yet. The deck list will stay empty until a runtime is added.</p>'}
       </section>
       <footer class="phone-footer">CAPRI // SETUP CHANNEL · TAILSCALE ONLY</footer>`
   }
@@ -657,6 +679,7 @@ export class PhoneUI {
     const agents = (state.agentsByDevice[device.name] ?? []).filter((agent) => agent.available)
     const canTerminal = device.available || Boolean(device.sshAvailable)
     const statusLabel = device.available ? 'Online' : device.sshAvailable ? `SSH via ${device.controllerName ?? 'Capri'}` : device.online ? 'Online · not configured' : 'Offline'
+    const configuredName = device.configuredName ?? device.name
     return `<article class="artifact deck-card${device.online ? '' : ' is-offline'}">
       <div class="artifact-header"><span>${escapeHtml(device.name)}</span><span class="deck-state ${device.online ? 'is-online' : 'is-offline'}"><span class="status-dot"></span>${escapeHtml(statusLabel)}</span></div>
       <div class="artifact-body">
@@ -666,6 +689,7 @@ export class PhoneUI {
       <div class="device-actions">
         <button class="button button-primary" type="button" data-action="jack-in" data-device="${attr(device.name)}" ${device.available ? '' : 'disabled'}>Open sessions</button>
         <button class="button" type="button" data-action="terminal" data-device="${attr(device.name)}" ${canTerminal ? '' : 'disabled'}>${device.sshAvailable && !device.available ? 'SSH shell' : 'Terminal'}</button>
+        ${device.capriHost ? `<button class="text-button" type="button" data-action="setup-edit" data-value="${attr(configuredName)}">Edit</button><button class="text-button" type="button" data-action="setup-remove" data-value="${attr(configuredName)}">Delete</button>` : ''}
       </div>
     </article>`
   }

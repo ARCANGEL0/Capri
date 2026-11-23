@@ -20,8 +20,8 @@ import {
 } from './phone-ui'
 import './style.css'
 
-type Screen = 'devices' | 'session-choice' | 'new_agent' | 'new_session' | 'resume' | 'runtimes' | 'chat' | 'review' | 'approval' | 'terminal' | 'keyboard' | 'more'
-type Device = { name: string; ip: string; sshHost?: string; os?: string; sshEligible?: boolean; online: boolean; baseUrl: string; token?: string; available: boolean; capriHost?: boolean; sshAvailable?: boolean; controllerName?: string }
+type Screen = 'devices' | 'session-choice' | 'new_agent' | 'new_session' | 'resume' | 'runtimes' | 'chat' | 'review' | 'approval' | 'terminal' | 'more'
+type Device = { name: string; ip: string; sshHost?: string; os?: string; sshEligible?: boolean; online: boolean; baseUrl: string; token?: string; available: boolean; capriHost?: boolean; configuredName?: string; sshAvailable?: boolean; controllerName?: string }
 type Agent = { id: string; name: string; available: boolean; runtimes?: string[] }
 type SessionInfo = { id: string; agent: string; title: string; updatedAt?: number; runtime?: string; cwd?: string; needsApproval?: boolean }
 type Approval = { agent: string; prompt: string; options: Array<{ id: string; label: string }> }
@@ -33,11 +33,8 @@ type ApiInit = Omit<RequestInit, 'body'> & { body?: ApiBody; timeoutMs?: number 
 const API_TOKEN = import.meta.env.VITE_CAPRI_RUNTIME_TOKEN ?? ''
 const RUNTIME_DEVICES_KEY = 'capri.runtime.devices.v1'
 const LIST_PAGE_SIZE = 5
-const KEYBOARD_PAGE_SIZE = 18
-const LIST_MAX_ITEMS = 20
 const MAX_HISTORY = 500
 const DEFAULT_VISIBLE_CHAT_LINES = 7
-const TYPE_KEYS = [...'abcdefghijklmnopqrstuvwxyz0123456789-_.@/: '].map((value) => ({ label: value === ' ' ? 'SPACE' : value.toUpperCase(), action: 'key', value }))
 
 const SPLASH_FRAME_MS = 120
 const SPLASH_HOLD_MS = 1500
@@ -52,7 +49,6 @@ let settings: CapriSettings = readSettings()
 const STT_SETTINGS_KEY = 'capri.stt.settings.v1'
 let sttSettings: SttSettings = readSttSettings()
 let screen: Screen = 'devices'
-let priorScreen: Screen = 'devices'
 let rows: Row[] = []
 let selectedRow = 0
 let listPage = 0
@@ -88,7 +84,10 @@ function readRuntimeDevices(): PhoneRuntimeDevice[] {
 }
 
 function writeRuntimeDevices(devicesToWrite: PhoneRuntimeDevice[]): void {
-  try { localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(devicesToWrite)) } catch { /* setup remains available for this launch */ }
+  try {
+    localStorage.setItem(RUNTIME_DEVICES_KEY, JSON.stringify(devicesToWrite))
+    void navigator.storage?.persist?.()
+  } catch { /* setup remains available for this launch */ }
 }
 
 function runtimeHostDevices(): Device[] {
@@ -214,7 +213,6 @@ let agentTranscript = ''
 let agentScreenHistory: string[] = []
 let lastAgentScreen = ''
 let screenHistoryTimer: number | undefined
-let typingText = ''
 let modelMode: 'new' | 'change' | 'view' = 'view'
 let modelReturnScreen: Screen = 'devices'
 let moreReturnScreen: Screen = 'devices'
@@ -442,9 +440,8 @@ async function bootSplash(): Promise<void> {
 const MENU: Array<{ id: number; label: string }> = [
   { id: 1, label: 'Devices' },
   { id: 2, label: 'Models' },
-  { id: 3, label: 'Type input' },
-  { id: 4, label: 'Session' },
-  { id: 5, label: 'More' },
+  { id: 3, label: 'Session' },
+  { id: 4, label: 'More' },
 ]
 
 function handleEvent(event: EvenHubEvent): void {
@@ -478,7 +475,7 @@ function handleEvent(event: EvenHubEvent): void {
   const index = listEvent.currentSelectItemIndex ?? 0
   if (index >= 0 && index < pageRows.length && index !== selectedRow) {
     selectedRow = index
-    if (screen === 'review' || screen === 'approval' || screen === 'keyboard') void redraw()
+    if (screen === 'review' || screen === 'approval') void redraw()
   }
   if ((listEvent.eventType ?? 0) === 0) {
     const row = pageRows[index]
@@ -495,11 +492,9 @@ async function handleMenu(id: number): Promise<void> {
     if (activeAgent) await openModels(activeAgent, activeSession ? 'change' : 'view')
     else await chooseAgentForModels()
   } else if (id === 3) {
-    openKeyboard()
-  } else if (id === 4) {
     if (activeDevice) await openSessionChoice()
     else await refreshDevices()
-  } else if (id === 5) {
+  } else if (id === 4) {
     moreReturnScreen = screen
     screen = 'more'
     listPage = 0
@@ -548,7 +543,10 @@ async function refreshDevices(): Promise<void> {
   }))
   if (token !== navigationToken) return
   const peerMap = new Map<string, { name: string; ip: string; dnsName?: string; os?: string; online: boolean }>()
+  const runtimeHostByPeer = new Map<string, Device>()
   for (const probe of probes) {
+    const runtimePeer = probe.peers[0]
+    if (probe.reachable && runtimePeer) runtimeHostByPeer.set(runtimePeer.name.toLowerCase(), probe.host)
     for (const peer of probe.peers) {
       const key = peer.name.toLowerCase()
       const previous = peerMap.get(key)
@@ -556,7 +554,8 @@ async function refreshDevices(): Promise<void> {
     }
   }
   for (const host of hosts) {
-    if (!peerMap.has(host.name)) peerMap.set(host.name, { name: host.name, ip: host.ip, dnsName: `${host.name}.tailnet.local`, os: 'linux', online: false })
+    const hasReachableRuntime = probes.some((probe) => probe.host.name === host.name && probe.reachable && probe.peers.length > 0)
+    if (!hasReachableRuntime && !peerMap.has(host.name.toLowerCase())) peerMap.set(host.name.toLowerCase(), { name: host.name, ip: host.ip, dnsName: `${host.name}.tailnet.local`, os: 'linux', online: false })
   }
   const hostAvailability = new Map(probes.map((probe) => [probe.host.name, probe.reachable]))
   const hostOrder = new Map(hosts.map((host, index) => [host.name, index]))
@@ -564,7 +563,7 @@ async function refreshDevices(): Promise<void> {
   devices = [...peerMap.values()]
     .sort((a, b) => (hostOrder.get(a.name.toLowerCase()) ?? hosts.length) - (hostOrder.get(b.name.toLowerCase()) ?? hosts.length) || a.name.localeCompare(b.name))
     .map((peer) => {
-      const host = hosts.find((item) => item.name.toLowerCase() === peer.name.toLowerCase())
+      const host = hosts.find((item) => item.name.toLowerCase() === peer.name.toLowerCase()) ?? runtimeHostByPeer.get(peer.name.toLowerCase())
       return {
         name: peer.name,
         ip: peer.ip || host?.ip || 'IP unavailable',
@@ -576,6 +575,7 @@ async function refreshDevices(): Promise<void> {
         token: host?.token ?? controller?.token,
         available: Boolean(host && peer.online && hostAvailability.get(host.name)),
         capriHost: Boolean(host),
+        configuredName: host?.name,
         controllerName: host ? undefined : controller?.name,
       }
     })
@@ -1500,22 +1500,6 @@ function handleAudio(event: EvenHubEvent): void {
   audioBuffers.push(event.audioEvent.audioPcm.slice())
 }
 
-function openKeyboard(): void {
-  if (!activeDevice || (!activeSession && screen !== 'terminal')) {
-    status = 'Open a session or terminal first'
-    void redraw()
-    return
-  }
-  terminalInput = screen === 'terminal'
-  priorScreen = screen
-  screen = 'keyboard'
-  typingText = ''
-  rows = [...TYPE_KEYS, { label: 'BACKSPACE', action: 'backspace' }, { label: 'SEND', action: 'send-typed' }, { label: 'CANCEL', action: 'cancel' }]
-  selectedRow = 0
-  status = 'SWIPE · TAP TO ADD'
-  void redraw()
-}
-
 async function sendInput(text: string, terminal: boolean): Promise<void> {
   const session = activeSession
   const device = activeSessionDevice ?? activeDevice
@@ -1534,7 +1518,6 @@ async function sendInput(text: string, terminal: boolean): Promise<void> {
     screen = 'chat'
   }
   promptText = ''
-  typingText = ''
   status = terminal ? 'LIVE  ·  TAP TO TALK' : 'LIVE  ·  TAP TO TALK'
   await redraw()
 }
@@ -1596,7 +1579,7 @@ async function activateRow(row: Row): Promise<void> {
     }
     return
   }
-  if (!['page-next', 'page-prev', 'key', 'backspace'].includes(row.action)) listPage = 0
+  if (!['page-next', 'page-prev'].includes(row.action)) listPage = 0
   if (row.action === 'device') return selectDevice(row.value ?? '')
   if (row.action === 'new_session') {
     return showAgents()
@@ -1692,24 +1675,6 @@ async function activateRow(row: Row): Promise<void> {
     await redraw()
     return
   }
-  if (row.action === 'key') {
-    typingText += row.value ?? ''
-    await redraw()
-    return
-  }
-  if (row.action === 'backspace') {
-    typingText = typingText.slice(0, -1)
-    await redraw()
-    return
-  }
-  if (row.action === 'send-typed') {
-    try {
-      await sendInput(typingText, terminalInput)
-    } catch (error) {
-      status = error instanceof Error ? error.message : 'Could not send input'
-      await redraw()
-    }
-  }
 }
 
 function goBack(): void {
@@ -1731,10 +1696,6 @@ function goBack(): void {
   } else if (screen === 'review') {
     screen = terminalInput ? 'terminal' : 'chat'
     promptText = ''
-    status = 'LIVE  ·  TAP TO TALK'
-    void redraw()
-  } else if (screen === 'keyboard') {
-    screen = priorScreen
     status = 'LIVE  ·  TAP TO TALK'
     void redraw()
   } else if (screen === 'approval') {
@@ -1844,19 +1805,6 @@ function viewForScreen(): HudView | undefined {
       },
     }
   }
-  if (screen === 'keyboard') {
-    return {
-      kind: 'keyboard',
-      data: {
-        title,
-        page: { index: listPage, count: listPageCount() },
-        typed: typingText,
-        pageIndex: listPage,
-        pageCount: listPageCount(),
-        footer: { left: status },
-      },
-    }
-  }
   if (screen === 'chat' || screen === 'terminal') {
     return {
       kind: 'live',
@@ -1909,7 +1857,6 @@ function screenTitle(): string {
   if (screen === 'more') return `RUNNER TOOLS${context}`
   if (screen === 'review') return terminalInput ? 'REVIEW / COMMAND' : 'REVIEW / PROMPT'
   if (screen === 'approval') return `APPROVAL NEEDED${context}`
-  if (screen === 'keyboard') return terminalInput ? 'TYPE / TERMINAL' : 'TYPE / SESSION'
   if (screen === 'terminal') return `TERMINAL${context}`
   if (screen === 'chat' && activeSession?.agent !== 'terminal') {
     return 'LIVE'
@@ -1918,21 +1865,12 @@ function screenTitle(): string {
 }
 
 function listPageCount(): number {
-  const pageSize = screen === 'keyboard' ? KEYBOARD_PAGE_SIZE : screen === 'resume' ? 2 : LIST_PAGE_SIZE
+  const pageSize = screen === 'resume' ? 2 : LIST_PAGE_SIZE
   return Math.max(1, Math.ceil(rows.length / pageSize))
 }
 
 function visibleRows(): Row[] {
-  if (screen !== 'keyboard') return rows
-  const pageCount = listPageCount()
-  listPage = Math.min(listPage, pageCount - 1)
-  if (rows.length <= LIST_MAX_ITEMS) return rows
-  const pageSize = KEYBOARD_PAGE_SIZE
-  const start = listPage * pageSize
-  const page: Row[] = rows.slice(start, start + pageSize)
-  if (listPage > 0) page.unshift({ label: `Previous page (${listPage} of ${pageCount})`, action: 'page-prev' })
-  if (listPage < pageCount - 1) page.push({ label: `Next page (${listPage + 2} of ${pageCount})`, action: 'page-next' })
-  return page
+  return rows
 }
 
 
