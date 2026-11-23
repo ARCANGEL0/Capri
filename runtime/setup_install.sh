@@ -84,6 +84,12 @@ choose_scope() {
   esac
 }
 
+guard_user_scope() {
+  if [[ "$CAPRI_SCOPE" == 'user' && "$(id -u)" -eq 0 && "$CAPRI_USER" != "$(id -un)" ]]; then
+    fail "User scope must run as $CAPRI_USER. Re-run without sudo, or choose system scope for a root install."
+  fi
+}
+
 prepare_sudo() {
   ROOT_PREFIX=()
   if [[ "$CAPRI_SCOPE" != 'system' || "$(id -u)" -eq 0 ]]; then return; fi
@@ -273,9 +279,10 @@ need curl
 if [[ "$CAPRI_SKIP_SERVE" != '1' ]]; then need tailscale; fi
 PYTHON_BIN="$(command -v python3)"
 choose_scope
+if ! id "$CAPRI_USER" >/dev/null 2>&1; then fail "User '$CAPRI_USER' does not exist. Set CAPRI_USER to the account that owns the agent sessions."; fi
+guard_user_scope
 prepare_sudo
 
-if ! id "$CAPRI_USER" >/dev/null 2>&1; then fail "User '$CAPRI_USER' does not exist. Set CAPRI_USER to the account that owns the agent sessions."; fi
 USER_HOME="$(user_home)"
 CAPRI_GROUP="$(id -gn "$CAPRI_USER")"
 USER_PATH="$(service_path)"
