@@ -4,7 +4,8 @@ import RuntimeStatusBar from './RuntimeStatusBar.vue'
 import type { NavItem } from '../types/dashboard'
 
 const route = useRoute()
-const { onlineDevices, activeSessions } = useDashboard()
+const dashboard = useDashboard()
+const { onlineDevices, activeSessions } = dashboard
 
 const navItems: NavItem[] = [
   { label: 'Overview', to: '/', icon: 'grid' },
@@ -18,6 +19,10 @@ function isActive(item: NavItem) {
   if (item.to === '/') return route.path === '/'
   return route.path.startsWith(item.to)
 }
+
+onMounted(() => {
+  void dashboard.syncRuntime()
+})
 </script>
 
 <template>
