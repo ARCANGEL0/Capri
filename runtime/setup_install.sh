@@ -43,6 +43,30 @@ trap on_error ERR
 
 need() { command -v "$1" >/dev/null 2>&1 || fail "Missing dependency: $1. Install it, then run Capri setup again."; }
 
+port_is_available() {
+  "$PYTHON_BIN" - "$1" <<'PY'
+import socket
+import sys
+
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+    probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    try:
+        probe.bind(("127.0.0.1", int(sys.argv[1])))
+    except (OSError, ValueError):
+        raise SystemExit(1)
+PY
+}
+
+ensure_runtime_port() {
+  local suggested='7790'
+  if [[ "$CAPRI_PORT" =~ ^[0-9]+$ ]]; then suggested="$((CAPRI_PORT + 1))"; fi
+  while ! port_is_available "$CAPRI_PORT"; do
+    warn "Runtime port $CAPRI_PORT is already in use."
+    (( CAPRI_INTERACTIVE )) || fail "Set CAPRI_PORT to a free local port and run setup again."
+    CAPRI_PORT="$(prompt_value 'Free runtime port' "$suggested")"
+  done
+}
+
 prompt_value() {
   local label="$1" default="$2" answer=''
   if (( CAPRI_INTERACTIVE )); then
@@ -289,6 +313,7 @@ USER_PATH="$(service_path)"
 CAPRI_DEVICE="$(prompt_value 'Machine label' "$CAPRI_DEVICE")"
 CAPRI_PORT="$(prompt_value 'Runtime port' "$CAPRI_PORT")"
 CAPRI_SERVE_PORT="$(prompt_value 'Tailscale HTTPS port' "$CAPRI_SERVE_PORT")"
+ensure_runtime_port
 
 TEMP_SERVER="$(mktemp)"
 trap 'rm -f "$TEMP_SERVER"' EXIT
