@@ -1,0 +1,26 @@
+{
+  "detector": {
+    "ignoreRules": [],
+    "ignoreFiles": [],
+    "ignoreValues": [
+      {
+        "rule": "overused-font",
+        "value": "inter",
+        "files": [
+          "Even_G2/src/style.css"
+        ],
+        "createdAt": "2026-11-24T21:14:05.932Z",
+        "reason": "Intentional readable companion UI body and form font; the HUD uses JetBrains Mono for Capri identity."
+      },
+      {
+        "rule": "overused-font",
+        "value": "arial",
+        "files": [
+          "Even_G2/src/style.css"
+        ],
+        "createdAt": "2026-11-24T21:14:06.256Z",
+        "reason": "Intentional narrow companion UI headings for the cyberdeck display hierarchy."
+      }
+    ]
+  }
+}

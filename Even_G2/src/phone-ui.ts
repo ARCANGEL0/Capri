@@ -170,6 +170,7 @@ export class PhoneUI {
   private pendingRender?: number
   private renderQueued = false
   private renderedTab?: PhoneTab
+  private mainScrollEpoch = 0
   private sttDraft: SttSettings = { ...EMPTY_STT }
   private setupName = ''
   private setupEndpoint = ''
@@ -185,6 +186,12 @@ export class PhoneUI {
     this.root.addEventListener('input', (event) => this.onInput(event))
     this.root.addEventListener('submit', (event) => this.onSubmit(event))
     this.root.addEventListener('keydown', (event) => this.onKeyDown(event))
+    this.root.addEventListener('scroll', (event) => {
+      const target = event.target
+      if (target instanceof HTMLElement && target.classList.contains('phone-main')) {
+        this.mainScrollEpoch += 1
+      }
+    }, true)
     this.root.addEventListener('focusout', () => {
       if (this.renderQueued) this.scheduleRender()
     })
@@ -198,7 +205,7 @@ export class PhoneUI {
     if (!snapshot.devices.some((device) => device.name === this.deviceName)) {
       this.deviceName = snapshot.settings.defaultDevice || available[0]?.name || snapshot.devices[0]?.name || ''
     }
-    if (!immediate && this.hasActiveEditor()) {
+    if (this.hasActiveEditor() || this.hasFocusedSelect()) {
       this.renderQueued = true
       return
     }
@@ -210,11 +217,16 @@ export class PhoneUI {
     return active instanceof HTMLElement && this.root.contains(active) && active.matches('[data-editor="1"]')
   }
 
+  private hasFocusedSelect(): boolean {
+    const active = document.activeElement
+    return active instanceof HTMLSelectElement && this.root.contains(active)
+  }
+
   private scheduleRender(immediate = false): void {
     if (this.pendingRender !== undefined) window.clearTimeout(this.pendingRender)
     this.pendingRender = window.setTimeout(() => {
       this.pendingRender = undefined
-      if (this.hasActiveEditor() && !immediate) {
+      if ((this.hasActiveEditor() || this.hasFocusedSelect()) && !immediate) {
         this.renderQueued = true
         return
       }
@@ -226,7 +238,7 @@ export class PhoneUI {
   private onClick(event: Event): void {
     const target = event.target
     if (!(target instanceof Element)) return
-    const button = target.closest<HTMLElement>('[data-action]')
+    const button = target.closest<HTMLElement>('button[data-action]')
     if (!button || button.hasAttribute('disabled')) return
     const action = button.dataset.action ?? ''
     const device = button.dataset.device || this.deviceName
@@ -895,6 +907,12 @@ export class PhoneUI {
       if (feed) feed.scrollTop = Math.min(previousFeedScroll, feed.scrollHeight)
       if (glasses) glasses.scrollTop = Math.min(previousGlassesScroll, glasses.scrollHeight)
     }
+    const restoreEpoch = this.mainScrollEpoch
+    window.requestAnimationFrame(() => {
+      if (this.mainScrollEpoch !== restoreEpoch) return
+      const currentMain = this.root.querySelector<HTMLElement>('.phone-main')
+      if (currentMain) currentMain.scrollTop = Math.min(previousMainScroll, currentMain.scrollHeight)
+    })
   }
 }
 

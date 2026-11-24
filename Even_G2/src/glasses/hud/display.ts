@@ -114,8 +114,7 @@ export class Hud {
   }
 
   private async drain(): Promise<void> {
-    await loadHudFont()
-    await loadHudAssets()
+    await Promise.all([loadHudFont(), loadHudAssets()])
     let failures = 0
     while (this.next) {
       const view = this.next
@@ -152,7 +151,6 @@ export class Hud {
       .filter(({ tile, key }) => this.sent.get(tile.id) !== key)
     const encoded = await Promise.all(changed.map(({ tile }) => tilePng(pixels, tile)))
     for (let i = 0; i < changed.length; i++) {
-      if (this.next) return
       await this.runtime.sendTile(changed[i].tile, encoded[i])
       this.sent.set(changed[i].tile.id, changed[i].key)
     }

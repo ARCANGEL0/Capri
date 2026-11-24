@@ -1,7 +1,7 @@
 // Screen layouts for the Capri lens, drawn onto the full 576 x 288 canvas.
 //
-// Everything is drawn as image art: corner brackets, scanline rows, header
-// notches, status glyphs, hex-grid accents. The art is cut into four 288 x 144
+// Everything is drawn as image art: corner brackets, header notches, status
+// glyphs, and compact frame accents. The art is cut into four 288 x 144
 // tiles and sent as image containers; text stays in firmware text containers
 // layered on top so cursor moves are instant.
 //
@@ -13,7 +13,6 @@ import { CAPRI_MARK, CAPRI_SHIELD_BITMAP, CAPRI_SPLASH_LOADER, CAPRI_SPLASH_LOAD
 const RIGHT = SCREEN_W - 4
 const TITLE_PX = 20
 const LABEL_PX = 18
-const FOOTER_RULE_Y = 232
 const FOOTER_Y = 238
 
 function icon(p: Pixels, name: IconName, x: number, y: number, value = BRIGHT): number {
@@ -25,7 +24,6 @@ function icon(p: Pixels, name: IconName, x: number, y: number, value = BRIGHT): 
 /** Capri prompt glyph "> " at (x, y). */
 /** Header band: beveled corners, Capri mark, page dots and circuit traces. */
 function header(p: Pixels, title: string, _mark: { index: number; count: number } | null): void {
-  // Instrument line: title, angled break, and a compact page counter.
   if (hudBadge) p.image(hudBadge, 28, 18, 24)
   else p.svg(CAPRI_MARK, 24, 35, 4, 18, BRIGHT, 1.2)
   const titleSize = title.startsWith('CAPRI') ? 16 : TITLE_PX
@@ -36,7 +34,6 @@ function header(p: Pixels, title: string, _mark: { index: number; count: number 
 }
 
 function footer(p: Pixels, left: string, right?: string): void {
-  p.line(4, FOOTER_RULE_Y, RIGHT, FOOTER_RULE_Y, MID, 1)
   p.text(left, 12, FOOTER_Y, LABEL_PX, 12)
   if (right) p.text(right, RIGHT - 8 - p.textWidth(right, LABEL_PX), FOOTER_Y, LABEL_PX, 12, 'right')
 }
@@ -47,7 +44,6 @@ function bevel(p: Pixels, x: number, y: number, w: number, h: number, tone = MID
     [x + w, y + h - cut], [x + w - cut, y + h],
     [x + cut, y + h], [x, y + h - cut], [x, y + cut], [x + cut, y],
   ], tone, 2)
-  p.line(x + cut + 8, y + 4, x + w - cut - 8, y + 4, 5, 1)
 }
 
 function cornerTicks(p: Pixels, x: number, y: number, w: number, h: number): void {
@@ -94,7 +90,6 @@ export function drawDevices(p: Pixels, d: DevicesData): void {
     p.circle(456, y + 6, 4, row.online ? (active ? BRIGHT : 10) : 4, true)
     p.text(row.online ? 'ONLINE' : 'OFFLINE', 470, y - 1, 13, row.online ? (active ? BRIGHT : 10) : 5)
   })
-  p.line(4, FOOTER_RULE_Y, RIGHT, FOOTER_RULE_Y, 6, 1)
   p.text('↑↓ NAVIGATE', 12, FOOTER_Y, 12, 10)
   p.text('TAP SELECT', RIGHT - 8, FOOTER_Y, 12, 10, 'right')
 }
@@ -166,24 +161,15 @@ export function drawList(p: Pixels, d: ListData): void {
   const frameHeight = sessionList ? 132 : 148
   bevel(p, 16, 66, 544, frameHeight, MID, 12)
   cornerTicks(p, 16, 66, 544, frameHeight)
-  const visibleCount = sessionList ? 2 : 4
   const hasColumns = sessionList
   if (hasColumns) {
     p.text('SESSION', 58, 74, 8, 7)
     p.text('HARNESS', 400, 74, 8, 7)
     p.text('LAST', 548, 74, 8, 7, 'right')
-    p.line(38, 83, 538, 83, 5, 1)
   }
-  // Row contents are supplied by LIST_LAYOUT's firmware text container. Keep
-  // the separators in the raster frame so they never move during a swipe.
-  const rowY = hasColumns ? 94 : 80
-  const rowH = hasColumns ? 46 : 32
-  for (let i = 1; i < visibleCount; i++) {
-    p.line(38, rowY + i * rowH - (hasColumns ? 10 : 7), 538, rowY + i * rowH - (hasColumns ? 10 : 7), 5, 1)
-  }
-
+  // Row contents are supplied by LIST_LAYOUT's firmware text container so
+  // selection changes do not require another full frame upload.
   if (sessionList) {
-    p.line(4, 208, RIGHT, 208, 6, 1)
     p.text('↑↓ NAVIGATE', 12, 214, 11, 10)
     p.text('TAP SELECT', 320, 214, 11, 10, 'center')
     p.text('2× RETURN', RIGHT - 8, 214, 11, 10, 'right')
@@ -222,7 +208,6 @@ export function drawLive(p: Pixels, d: LiveData): void {
     p.text(p.fit(line, 18, 540), 12, y + i * 24, 18, tone)
   })
 
-  p.line(4, FOOTER_RULE_Y, RIGHT, FOOTER_RULE_Y, 6, 1)
   p.text(p.fit(d.footer.left, 12, 540), 12, FOOTER_Y, 12, 10)
 }
 
@@ -243,7 +228,7 @@ export function drawApproval(p: Pixels, d: ApprovalData): void {
   const promptLines = d.prompt.split('\n').flatMap((line) => wrapText(p, line || ' ', 14, 540, 3)).slice(0, 3)
   promptLines.forEach((line, i) => p.text(line, 12, 64 + i * 16, 14, 12))
   const rowY = 64 + Math.max(1, promptLines.length) * 16 + 8
-  const rowH = Math.max(26, Math.min(32, Math.floor((FOOTER_RULE_Y - rowY - 5) / Math.max(1, d.options.length))))
+  const rowH = Math.max(26, Math.min(32, Math.floor((FOOTER_Y - rowY - 5) / Math.max(1, d.options.length))))
   const optionPx = rowH >= 30 ? 13 : 12
   d.options.forEach((option, i) => {
     const active = i === d.selected
@@ -308,7 +293,6 @@ export function drawBox(p: Pixels, name: IconName, title: string, rowIcons: Arra
     p.bitmap(rows, iconX, centre - Math.ceil(rows.length / 2), BRIGHT)
   })
 
-  p.line(x0, y1, x1, y1, MID, 1)
 }
 
 export function drawSplash(p: Pixels, progress: number, left: number, _top: number, size: number, _label = 'CAPRI // BOOTING'): void {

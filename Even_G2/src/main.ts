@@ -45,8 +45,8 @@ const LIST_PAGE_SIZE = 5
 const MAX_HISTORY = 500
 const DEFAULT_VISIBLE_CHAT_LINES = 7
 
-const SPLASH_FRAME_MS = 120
-const SPLASH_HOLD_MS = 1500
+const SPLASH_FRAME_MS = 90
+const SPLASH_FRAMES = 5
 
 let phoneUI: PhoneUI | undefined
 let bridge: Awaited<ReturnType<typeof waitForEvenAppBridge>> | undefined
@@ -73,6 +73,7 @@ let modelChoices: string[] = []
 let activeModel = ''
 let sessions: SessionInfo[] = []
 let activeSession: SessionInfo | undefined
+let pendingResumeSession: SessionInfo | undefined
 let activeSavedSessionId = ''
 const APPROVAL_SESSIONS_KEY = 'capri.approval-sessions.v1'
 const RUNTIME_SESSIONS_KEY = 'capri.runtime-sessions.v1'
@@ -433,6 +434,7 @@ function resetLocalStorage(): void {
   activeDevice = undefined
   activeTargetDevice = undefined
   activeSession = undefined
+  pendingResumeSession = undefined
   activeSessionDevice = undefined
   activeSavedSessionId = ''
   sessions = []
@@ -507,18 +509,11 @@ async function boot(): Promise<void> {
 
 async function bootSplash(): Promise<void> {
   if (!hud) return
-  const phases = ['BOOTING CAPRI', 'SCANNING TAILNET', 'SYNCING HARNESS', 'CAPRI ONLINE']
-  const frames = 12
-  for (let frame = 1; frame <= frames; frame++) {
-    const phase = phases[Math.min(phases.length - 1, Math.floor((frame - 1) * phases.length / frames))]
-    await hud.show({ kind: 'splash', progress: frame / frames, text: phase })
+  for (let frame = 1; frame <= SPLASH_FRAMES; frame++) {
+    await hud.show({ kind: 'splash', progress: frame / SPLASH_FRAMES, text: 'CAPRI // BOOTING' })
     await new Promise(resolve => setTimeout(resolve, SPLASH_FRAME_MS))
   }
-  const holdFrames = Math.ceil(SPLASH_HOLD_MS / SPLASH_FRAME_MS)
-  for (let frame = 0; frame < holdFrames; frame++) {
-    await hud.show({ kind: 'splash', progress: 1 + frame / frames, text: 'CAPRI ONLINE' })
-    await new Promise(resolve => setTimeout(resolve, SPLASH_FRAME_MS))
-  }
+  await hud.show({ kind: 'splash', progress: 1, text: 'CAPRI ONLINE' })
   await refreshDevices()
 }
 
@@ -557,7 +552,12 @@ function handleEvent(event: EvenHubEvent): void {
   const listEvent = event.listEvent
   if (!listEvent) return
   const pageRows = visibleRows()
-  const index = listEvent.currentSelectItemIndex ?? 0
+  const namedIndex = listEvent.currentSelectItemName
+    ? pageRows.findIndex((row) => row.label === listEvent.currentSelectItemName)
+    : -1
+  const index = typeof listEvent.currentSelectItemIndex === 'number'
+    ? listEvent.currentSelectItemIndex
+    : namedIndex
   if (index >= 0 && index < pageRows.length && index !== selectedRow) {
     selectedRow = index
     if (screen === 'review' || screen === 'approval') void redraw()
@@ -855,6 +855,7 @@ async function phoneDisconnect(): Promise<void> {
     status = error instanceof Error ? error.message : 'Could not disconnect'
   }
   activeSession = undefined
+  pendingResumeSession = undefined
   writeRuntimeSession(activeDevice?.name ?? '', activeSavedSessionId)
   activeSavedSessionId = ''
   activeSessionDevice = undefined
@@ -1014,11 +1015,13 @@ async function openSessions(): Promise<void> {
 }
 
 async function showRuntimes(session: SessionInfo): Promise<void> {
-  activeSession = session
+  pendingResumeSession = session
   if (session.agent === 'claude') {
-    const installed = agents.length ? agents : ((await requestJson(activeDevice!, '/api/v1/agents') as { agents?: Agent[] }).agents ?? [])
+    const installed = agents
     const claudeAgent = installed.find((agent) => agent.id === 'claude')
-    const choices = (claudeAgent?.runtimes ?? ['claude']).filter((id) => installed.some((agent) => agent.id === id && agent.available))
+    const choices = session.runtime
+      ? [session.runtime]
+      : (claudeAgent?.runtimes ?? ['claude']).filter((id) => installed.some((agent) => agent.id === id && agent.available))
     rows = choices.map((runtime) => ({ label: `Resume with ${runtime}`, action: 'runtime', value: runtime }))
     if (rows.length > 1) {
       screen = 'runtimes'
@@ -1036,6 +1039,7 @@ async function showRuntimes(session: SessionInfo): Promise<void> {
 
 async function startSession(agent: string, model: string, resumeID = '', runtime = agent, forceResume = false, conflictRetried = false): Promise<void> {
   if (!activeDevice) return
+  pendingResumeSession = undefined
   if (resumeID && !activeSession && !forceResume) {
     const savedRuntime = readRuntimeSession(activeDevice.name, resumeID)
     if (savedRuntime) {
@@ -1099,12 +1103,22 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
   activeAgent = agents.find((item) => item.id === agent) ?? { id: agent, name: agentLabel(agent), available: true }
   activeTargetDevice = undefined
   activeRuntime = runtime
-  await redraw()
+  activeSession = {
+    id: `pending:${Date.now()}`,
+    agent,
+    title: sessions.find((item) => item.id === resumeID)?.title ?? agentLabel(agent),
+    runtime,
+  }
+  activeSavedSessionId = resumeID
+  activeSessionDevice = activeDevice
+  screen = 'chat'
   try {
-    const created = await requestJson(activeDevice, '/api/v1/sessions', {
+    const createRequest = requestJson(activeDevice, '/api/v1/sessions', {
       method: 'POST',
       body: { agent, runtime, model, resume_id: resumeID, cwd: sessions.find((item) => item.id === resumeID)?.cwd },
-    }) as { id: string; session_id?: string; title?: string }
+    }) as Promise<{ id: string; session_id?: string; title?: string }>
+    await redraw()
+    const created = await createRequest
     activeSession = { id: created.id, agent, title: created.title ?? agentLabel(agent), runtime }
     activeSavedSessionId = resumeID
     if (resumeID) writeRuntimeSession(activeDevice.name, resumeID, created.id)
@@ -1143,12 +1157,12 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
     }
     status = error instanceof Error ? error.message : 'Jack-in failed'
     setSessionLoading(false)
+    activeSession = undefined
+    activeSavedSessionId = ''
+    activeSessionDevice = undefined
     if (resumeID) {
       writeRuntimeSession(activeDevice.name, resumeID)
       screen = 'resume'
-      activeSession = undefined
-      activeSavedSessionId = ''
-      activeSessionDevice = undefined
       rows = [
         { label: '[+] NEW SESSION', action: 'new_session' },
         ...sortSessions(sessions).map((session) => ({
@@ -1160,6 +1174,8 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
           approval: Boolean(session.needsApproval),
         })),
       ]
+    } else {
+      screen = 'new_agent'
     }
     await redraw()
   }
@@ -1705,11 +1721,24 @@ async function activateRow(row: Row): Promise<void> {
   }
   if (row.action === 'session') {
     const session = sessions.find((item) => item.id === row.value)
-    if (session) await showRuntimes(session)
+    if (session) {
+      try {
+        await showRuntimes(session)
+      } catch (error) {
+        activeSession = undefined
+        pendingResumeSession = undefined
+        activeSavedSessionId = ''
+        activeSessionDevice = undefined
+        screen = 'resume'
+        status = error instanceof Error ? error.message : 'Could not open session'
+        await redraw()
+      }
+    }
     return
   }
   if (row.action === 'runtime') {
-    if (activeSession) await startSession(activeSession.agent, '', activeSession.id, row.value ?? activeSession.agent)
+    const resume = pendingResumeSession
+    if (resume) await startSession(resume.agent, '', resume.id, row.value ?? resume.agent)
     return
   }
   if (row.action === 'send') {
@@ -1777,6 +1806,7 @@ function goBack(): void {
   } else if (screen === 'new_agent' || screen === 'new_session' || screen === 'resume') {
     void selectDevice(activeDevice?.name ?? '')
   } else if (screen === 'runtimes') {
+    pendingResumeSession = undefined
     void openSessions()
   } else if (screen === 'more') {
     screen = moreReturnScreen
