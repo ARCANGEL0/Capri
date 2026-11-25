@@ -7,7 +7,7 @@
 // drawing, so antialiased edges stay as real grey steps on the glass.
 
 import fontUrl from './fonts/jetbrains-mono-bold.woff2?url'
-import badgeUrl from '../../../icons/custom/CapriBadge.png?url'
+import badgeUrl from '../../../icons/custom/CapriShield.png?url'
 
 export const SCREEN_W = 576
 export const SCREEN_H = 288

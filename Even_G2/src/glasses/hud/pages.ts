@@ -24,7 +24,7 @@ function icon(p: Pixels, name: IconName, x: number, y: number, value = BRIGHT): 
 /** Capri prompt glyph "> " at (x, y). */
 /** Header band: beveled corners, Capri mark, page dots and circuit traces. */
 function header(p: Pixels, title: string, _mark: { index: number; count: number } | null): void {
-  if (hudBadge) p.image(hudBadge, 28, 18, 24)
+  if (hudBadge) p.image(hudBadge, 22, 8, 32)
   else p.svg(CAPRI_MARK, 24, 35, 4, 18, BRIGHT, 1.2)
   const titleSize = title.startsWith('CAPRI') ? 16 : TITLE_PX
   const titleWidth = title.startsWith('CAPRI') ? 450 : 360

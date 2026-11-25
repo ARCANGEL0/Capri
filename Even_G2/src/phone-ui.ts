@@ -173,6 +173,7 @@ export class PhoneUI {
   private mainScrollEpoch = 0
   private mainScrollTop = 0
   private mainScrollFollowsEnd = false
+  private restoringMainScroll = false
   private restoreFrame?: number
   private sttDraft: SttSettings = { ...EMPTY_STT }
   private setupName = ''
@@ -192,9 +193,11 @@ export class PhoneUI {
     this.root.addEventListener('scroll', (event) => {
       const target = event.target
       if (target instanceof HTMLElement && target.classList.contains('phone-main')) {
+        if (this.restoringMainScroll) return
         this.mainScrollEpoch += 1
         this.mainScrollTop = target.scrollTop
-        this.mainScrollFollowsEnd = target.scrollTop + target.clientHeight >= target.scrollHeight - 8
+        const hasOverflow = target.scrollHeight > target.clientHeight + 8
+        this.mainScrollFollowsEnd = hasOverflow && target.scrollTop + target.clientHeight >= target.scrollHeight - 8
       }
     }, true)
     this.root.addEventListener('focusout', () => {
@@ -631,6 +634,10 @@ export class PhoneUI {
     if (!state) return
     const sameTab = this.renderedTab === this.tab
     const previousMainScroll = sameTab ? this.mainScrollTop : 0
+    if (!sameTab) {
+      this.mainScrollTop = 0
+      this.mainScrollFollowsEnd = false
+    }
     const previousTerminalScroll = this.root.querySelector<HTMLElement>('.terminal-output')?.scrollTop ?? 0
     const previousFeedScroll = this.root.querySelector<HTMLElement>('.chat-feed')?.scrollTop ?? 0
     const previousGlassesScroll = this.root.querySelector<HTMLElement>('.glasses-screen-copy')?.scrollTop ?? 0
@@ -903,10 +910,12 @@ export class PhoneUI {
     const feed = this.root.querySelector<HTMLElement>('.chat-feed')
     const glasses = this.root.querySelector<HTMLElement>('.glasses-screen-copy')
     if (main) {
+      this.restoringMainScroll = true
       main.scrollTop = this.mainScrollFollowsEnd
         ? Math.max(0, main.scrollHeight - main.clientHeight)
         : Math.min(previousMainScroll, main.scrollHeight)
       this.mainScrollTop = main.scrollTop
+      this.restoringMainScroll = false
     }
     if (settings?.autoScroll) {
       if (terminal) terminal.scrollTop = terminal.scrollHeight
@@ -924,10 +933,12 @@ export class PhoneUI {
       if (this.mainScrollEpoch !== restoreEpoch) return
       const currentMain = this.root.querySelector<HTMLElement>('.phone-main')
       if (!currentMain) return
+      this.restoringMainScroll = true
       currentMain.scrollTop = this.mainScrollFollowsEnd
         ? Math.max(0, currentMain.scrollHeight - currentMain.clientHeight)
         : Math.min(previousMainScroll, currentMain.scrollHeight)
       this.mainScrollTop = currentMain.scrollTop
+      this.restoringMainScroll = false
     })
   }
 }
