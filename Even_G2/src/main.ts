@@ -333,6 +333,11 @@ function setSessionLoading(next: boolean): void {
   }, 260)
 }
 
+function markSessionAttached(): void {
+  setSessionLoading(false)
+  if (status === 'RESUMING SESSION...' || status === 'Opening saved session...') status = 'LIVE  ·  TAP TO TALK'
+}
+
 function updatePhoneUI(immediate = false): void {
   if (!phoneUI) return
   const snapshot: PhoneSnapshot = {
@@ -1052,6 +1057,7 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
       activeAgent = agents.find((item) => item.id === agent) ?? { id: agent, name: agentLabel(agent), available: true }
       screen = 'chat'
       status = 'RESUMING SESSION...'
+      markSessionAttached()
       await redraw()
       startOutputStream(savedRuntime, activeDevice, () => {
         writeRuntimeSession(activeDevice?.name ?? '', resumeID)
@@ -1129,7 +1135,7 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
     activeModel = model
     agentTerminal.reset()
     agentTranscript = readChatTranscript(activeDevice.name, resumeID)
-    if (agentTranscript) setSessionLoading(false)
+    markSessionAttached()
     stopAgentScreenHistory()
     agentScreenHistory = []
     lastAgentScreen = ''
@@ -1229,6 +1235,7 @@ function startOutputStream(sessionID: string, device: Device | undefined = activ
         throw new Error(`Stream returned ${response.status}`)
       }
       if (!response.body) throw new Error('Session stream has no body')
+      markSessionAttached()
       const reader = response.body.getReader()
       const decoder = new TextDecoder()
       let pending = ''
@@ -1255,6 +1262,7 @@ function startOutputStream(sessionID: string, device: Device | undefined = activ
       }
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return
+      setSessionLoading(false)
       status = 'STREAM RECONNECTING'
       void redraw()
     }
