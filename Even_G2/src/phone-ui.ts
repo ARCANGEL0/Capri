@@ -172,7 +172,6 @@ export class PhoneUI {
   private renderedTab?: PhoneTab
   private mainScrollEpoch = 0
   private mainScrollTop = 0
-  private mainScrollFollowsEnd = false
   private restoringMainScroll = false
   private restoreFrame?: number
   private sttDraft: SttSettings = { ...EMPTY_STT }
@@ -196,8 +195,6 @@ export class PhoneUI {
         if (this.restoringMainScroll) return
         this.mainScrollEpoch += 1
         this.mainScrollTop = target.scrollTop
-        const hasOverflow = target.scrollHeight > target.clientHeight + 8
-        this.mainScrollFollowsEnd = hasOverflow && target.scrollTop + target.clientHeight >= target.scrollHeight - 8
       }
     }, true)
     this.root.addEventListener('focusout', () => {
@@ -241,6 +238,11 @@ export class PhoneUI {
       this.renderQueued = false
       this.render()
     }, immediate ? 0 : 160)
+  }
+
+  private deferControlRender(): void {
+    this.renderQueued = true
+    this.scheduleRender()
   }
 
   private onClick(event: Event): void {
@@ -408,14 +410,14 @@ export class PhoneUI {
     if (action === 'device') {
       this.deviceName = target.value
       this.newModel = this.defaultModel(this.deviceName, this.newAgent || this.preferredAgent(this.deviceName))
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'stt-provider') {
       this.sttDraft.provider = target.value as SttSettings['provider']
       const provider = STT_PROVIDERS.find((item) => item.id === target.value)
       if (provider) this.sttDraft.model = provider.defaultModel
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'stt-model') {
@@ -429,12 +431,12 @@ export class PhoneUI {
     if (action === 'ssh-host') {
       this.sshHostName = target.value
       this.sshUsername = this.snapshot.settings.sshTargets[target.value] ?? ''
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'session-filter') {
       this.sessionMachine = target.value
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'change-model') {
@@ -443,14 +445,14 @@ export class PhoneUI {
     }
     if (action === 'session-agent') {
       this.sessionAgent = target.value
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'new-agent') {
       this.newAgent = target.value
       this.newModel = this.defaultModel(this.deviceName, this.newAgent)
       this.actions.loadModels(this.deviceName, this.newAgent)
-      this.render()
+      this.deferControlRender()
       return
     }
     if (action === 'new-model') {
@@ -633,10 +635,11 @@ export class PhoneUI {
     const state = this.snapshot
     if (!state) return
     const sameTab = this.renderedTab === this.tab
-    const previousMainScroll = sameTab ? this.mainScrollTop : 0
+    const previousMainScroll = sameTab
+      ? this.root.querySelector<HTMLElement>('.phone-main')?.scrollTop ?? this.mainScrollTop
+      : 0
     if (!sameTab) {
       this.mainScrollTop = 0
-      this.mainScrollFollowsEnd = false
     }
     const previousTerminalScroll = this.root.querySelector<HTMLElement>('.terminal-output')?.scrollTop ?? 0
     const previousFeedScroll = this.root.querySelector<HTMLElement>('.chat-feed')?.scrollTop ?? 0
@@ -911,9 +914,7 @@ export class PhoneUI {
     const glasses = this.root.querySelector<HTMLElement>('.glasses-screen-copy')
     if (main) {
       this.restoringMainScroll = true
-      main.scrollTop = this.mainScrollFollowsEnd
-        ? Math.max(0, main.scrollHeight - main.clientHeight)
-        : Math.min(previousMainScroll, main.scrollHeight)
+      main.scrollTop = Math.min(previousMainScroll, Math.max(0, main.scrollHeight - main.clientHeight))
       this.mainScrollTop = main.scrollTop
       this.restoringMainScroll = false
     }
@@ -926,20 +927,10 @@ export class PhoneUI {
       if (feed) feed.scrollTop = Math.min(previousFeedScroll, feed.scrollHeight)
       if (glasses) glasses.scrollTop = Math.min(previousGlassesScroll, glasses.scrollHeight)
     }
-    const restoreEpoch = this.mainScrollEpoch
-    if (this.restoreFrame !== undefined) window.cancelAnimationFrame(this.restoreFrame)
-    this.restoreFrame = window.requestAnimationFrame(() => {
+    if (this.restoreFrame !== undefined) {
+      window.cancelAnimationFrame(this.restoreFrame)
       this.restoreFrame = undefined
-      if (this.mainScrollEpoch !== restoreEpoch) return
-      const currentMain = this.root.querySelector<HTMLElement>('.phone-main')
-      if (!currentMain) return
-      this.restoringMainScroll = true
-      currentMain.scrollTop = this.mainScrollFollowsEnd
-        ? Math.max(0, currentMain.scrollHeight - currentMain.clientHeight)
-        : Math.min(previousMainScroll, currentMain.scrollHeight)
-      this.mainScrollTop = currentMain.scrollTop
-      this.restoringMainScroll = false
-    })
+    }
   }
 }
 
