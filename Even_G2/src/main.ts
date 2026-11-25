@@ -1059,6 +1059,10 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
       status = 'RESUMING SESSION...'
       markSessionAttached()
       await redraw()
+      stopAgentScreenHistory()
+      agentScreenHistory = []
+      lastAgentScreen = ''
+      startAgentScreenHistory()
       startOutputStream(savedRuntime, activeDevice, () => {
         writeRuntimeSession(activeDevice?.name ?? '', resumeID)
         activeSession = undefined
@@ -1076,6 +1080,7 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
       screen = 'chat'
       status = 'RESUMING SESSION...'
       await redraw()
+      startAgentScreenHistory()
       startOutputStream(activeSession.id, activeSessionDevice, () => {
         void (async () => {
           try {
