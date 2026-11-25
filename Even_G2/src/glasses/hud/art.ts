@@ -172,6 +172,7 @@ export type IconName =
   | 'check'
   | 'cross'
   | 'arrow'
+  | 'warning'
 
 // 1-bit bitmap rows, each row same width. '#' is lit.
 export const ICONS: Record<IconName, readonly string[]> = {
@@ -308,5 +309,16 @@ export const ICONS: Record<IconName, readonly string[]> = {
     '..#...#...#..',
     '......#......',
     '......#......',
+  ],
+  warning: [
+    '....###....',
+    '...#####...',
+    '..##...##..',
+    '..#.....#..',
+    '.#...#...#.',
+    '.#...#...#.',
+    '#....#....#',
+    '#.........#',
+    '###########',
   ],
 }

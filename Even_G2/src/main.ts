@@ -20,7 +20,7 @@ import {
 } from './phone-ui'
 import './style.css'
 
-type Screen = 'devices' | 'session-choice' | 'new_agent' | 'new_session' | 'resume' | 'runtimes' | 'chat' | 'review' | 'approval' | 'terminal' | 'more'
+type Screen = 'devices' | 'session-choice' | 'new_agent' | 'new_session' | 'resume' | 'runtimes' | 'chat' | 'review' | 'approval' | 'terminal' | 'more' | 'error'
 type Device = { name: string; ip: string; sshHost?: string; os?: string; sshEligible?: boolean; online: boolean; baseUrl: string; token?: string; available: boolean; checking?: boolean; capriHost?: boolean; configuredName?: string; sshAvailable?: boolean; controllerName?: string }
 type Agent = { id: string; name: string; available: boolean; runtimes?: string[] }
 type SessionInfo = { id: string; agent: string; title: string; updatedAt?: number; runtime?: string; cwd?: string; needsApproval?: boolean }
@@ -280,6 +280,8 @@ let approvalReturnScreen: Screen = 'chat'
 let pendingApproval: Approval | undefined
 let pendingInput: InteractivePrompt | undefined
 let lastInputPrompt = ''
+let errorMessage = ''
+let errorReturnScreen: Screen = 'devices'
 let chatOffset = 0
 let chatAutoFollowing = true
 let terminalOffset = 0
@@ -336,6 +338,14 @@ function setSessionLoading(next: boolean): void {
 function markSessionAttached(): void {
   setSessionLoading(false)
   if (status === 'RESUMING SESSION...' || status === 'Opening saved session...') status = 'LIVE  ·  TAP TO TALK'
+}
+
+function showError(message: string, returnScreen: Screen = screen): void {
+  errorMessage = message.replace(/\s+/g, ' ').trim().slice(0, 720) || 'Unknown Capri error'
+  errorReturnScreen = returnScreen === 'error' ? 'devices' : returnScreen
+  status = `ERROR  ·  ${errorMessage.slice(0, 42)}`
+  screen = 'error'
+  void redraw()
 }
 
 function updatePhoneUI(immediate = false): void {
@@ -468,6 +478,7 @@ async function boot(): Promise<void> {
   window.addEventListener('pagehide', cleanup)
 
   runtime.onSwipe((dir: 'up' | 'down') => {
+    if (screen === 'error') return
     if (screen === 'chat' || screen === 'terminal') {
       if (dir === 'down') {
         if (screen === 'chat' && activeSession?.agent !== 'terminal') {
@@ -544,6 +555,7 @@ function handleEvent(event: EvenHubEvent): void {
     if (type === 7 || type === 10) { cleanup(); return }
     if (type === 3) { goBack(); return }
     if (type === 0 && !event.listEvent) {
+      if (screen === 'error') { goBack(); return }
       if (screen === 'chat' || screen === 'terminal') {
         toggleRecording()
       } else {
@@ -1166,14 +1178,18 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
         // Fall through to the original error if the conflict cannot be cleared.
       }
     }
-    status = error instanceof Error ? error.message : 'Jack-in failed'
+    const failure = error instanceof Error ? error.message : 'Jack-in failed'
     setSessionLoading(false)
+    stopAgentScreenHistory()
+    agentScreenHistory = []
+    lastAgentScreen = ''
     activeSession = undefined
     activeSavedSessionId = ''
     activeSessionDevice = undefined
+    let returnScreen: Screen
     if (resumeID) {
       writeRuntimeSession(activeDevice.name, resumeID)
-      screen = 'resume'
+      returnScreen = 'resume'
       rows = [
         { label: '[+] NEW SESSION', action: 'new_session' },
         ...sortSessions(sessions).map((session) => ({
@@ -1186,9 +1202,9 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
         })),
       ]
     } else {
-      screen = 'new_agent'
+      returnScreen = 'new_agent'
     }
-    await redraw()
+    showError(failure, returnScreen)
   }
 }
 
@@ -1216,8 +1232,7 @@ async function startTerminal(): Promise<void> {
     await redraw()
     startOutputStream(created.id, activeDevice)
   } catch (error) {
-    status = error instanceof Error ? error.message : 'Could not open terminal'
-    await redraw()
+    showError(error instanceof Error ? error.message : 'Could not open terminal', 'devices')
   }
 }
 
@@ -1268,8 +1283,7 @@ function startOutputStream(sessionID: string, device: Device | undefined = activ
     } catch (error) {
       if (error instanceof Error && error.name === 'AbortError') return
       setSessionLoading(false)
-      status = 'STREAM RECONNECTING'
-      void redraw()
+      showError(`Session stream failed: ${error instanceof Error ? error.message : 'connection lost'}`, screen)
     }
   })()
 }
@@ -1356,6 +1370,10 @@ function appendChatText(text: string): void {
 function startAgentScreenHistory(): void {
   stopAgentScreenHistory()
   screenHistoryTimer = window.setInterval(() => {
+    if (!activeSession || !['chat', 'approval', 'review'].includes(screen)) {
+      stopAgentScreenHistory()
+      return
+    }
     const current = presentAgentScreen(agentTranscript || agentTerminal.text())
     if (sessionLoading && current.response) setSessionLoading(false)
     if (current.action) status = current.action
@@ -1824,6 +1842,11 @@ function goBack(): void {
   } else if (screen === 'more') {
     screen = moreReturnScreen
     void redraw()
+  } else if (screen === 'error') {
+    screen = errorReturnScreen
+    errorMessage = ''
+    if (screen === 'chat' || screen === 'terminal') startAgentScreenHistory()
+    void redraw()
   } else if (screen === 'review') {
     screen = terminalInput ? 'terminal' : 'chat'
     promptText = ''
@@ -1865,6 +1888,17 @@ async function redraw(updatePhone = true): Promise<void> {
 
 function viewForScreen(): HudView | undefined {
   const title = screenTitle()
+
+  if (screen === 'error') {
+    return {
+      kind: 'box',
+      icon: 'warning',
+      title: 'CAPRI ERROR',
+      count: '',
+      body: errorMessage || 'Unknown Capri error',
+      hint: 'DOUBLE TAP TO RETURN',
+    }
+  }
 
   if (screen === 'devices') {
     return {
@@ -1986,6 +2020,7 @@ function screenTitle(): string {
   if (screen === 'resume') return `SESSIONS${context}`
   if (screen === 'runtimes') return 'CHOOSE RUNTIME'
   if (screen === 'more') return `RUNNER TOOLS${context}`
+  if (screen === 'error') return 'CAPRI ERROR'
   if (screen === 'review') return terminalInput ? 'REVIEW / COMMAND' : 'REVIEW / PROMPT'
   if (screen === 'approval') return `APPROVAL NEEDED${context}`
   if (screen === 'terminal') return `TERMINAL${context}`

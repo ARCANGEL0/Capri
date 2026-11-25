@@ -172,6 +172,28 @@ class ManagedSession:
             self.process.wait(timeout=3)
 
 
+def reap_finished_sessions():
+    stale = []
+    with SESSION_LOCK:
+        for session_id, session in list(SESSIONS.items()):
+            if session.done or session.process.poll() is not None:
+                stale.append(session)
+                SESSIONS.pop(session_id, None)
+    for session in stale:
+        session.stop()
+
+
+def active_saved_session(saved_id):
+    if not saved_id:
+        return None
+    reap_finished_sessions()
+    with SESSION_LOCK:
+        return next((
+            session for session in SESSIONS.values()
+            if session.saved_id == saved_id and not session.done and session.process.poll() is None
+        ), None)
+
+
 def api_error(message, code=400):
     return code, {"error": str(message)}
 
@@ -1001,13 +1023,18 @@ def build_tailscale_ssh_command(target, username):
 
 
 def create_managed_session(command, kind, agent, runtime, title, saved_id="", cwd=None):
+    reap_finished_sessions()
+    duplicates = []
     with SESSION_LOCK:
-        expired = [key for key, value in SESSIONS.items() if value.done]
-        for key in expired[:-20]:
-            SESSIONS.pop(key, None)
+        if saved_id:
+            duplicates = [session for session in SESSIONS.values() if session.saved_id == saved_id and not session.done]
+            for session in duplicates:
+                SESSIONS.pop(session.id, None)
         active = [session for session in SESSIONS.values() if not session.done]
         if len(active) >= MAX_SESSIONS:
-            raise RuntimeError("Close a session before opening another")
+            raise RuntimeError(f"Close a session before opening another ({len(active)} active)")
+    for session in duplicates:
+        session.stop()
     master_fd, slave_fd = pty.openpty()
     try:
         fcntl.ioctl(slave_fd, termios.TIOCSWINSZ, struct.pack("HHHH", 24, 80, 0, 0))
@@ -1120,6 +1147,10 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 cwd = str(data.get("cwd") or "")
                 if resume_id and not re.fullmatch(r"[A-Za-z0-9_.-]+", resume_id):
                     self.send_json(*api_error("Invalid session ID"))
+                    return
+                existing = active_saved_session(resume_id)
+                if existing:
+                    self.send_json(200, {"id": existing.id, "session_id": resume_id, "title": existing.title, "reused": True})
                     return
                 command, runner = build_agent_command(agent, runtime, model, resume_id)
                 title = f"{AGENT_NAMES[agent]} / {DEVICE}"
