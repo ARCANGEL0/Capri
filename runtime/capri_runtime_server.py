@@ -994,19 +994,15 @@ def build_agent_command(agent, runtime, model, resume_id):
     binary = command_path(runner)
     if not binary:
         raise ValueError(f"{AGENT_NAMES.get(runner, runner)} is not installed on {DEVICE}")
-    command = [binary]
+    capri = shutil.which("capri")
+    command = [capri, runner] if capri else [binary]
     if runner in ("claude", "nclaude"):
         if resume_id:
             command.extend(["--resume", resume_id])
         if model:
             command.extend(["--model", model])
     elif runner == "codex":
-        capri = shutil.which("capri")
-        if capri:
-            command = [capri, "codex"]
-            if resume_id:
-                command.extend(["resume", resume_id])
-        elif resume_id:
+        if resume_id:
             command.extend(["resume", resume_id])
             command.append("--no-alt-screen")
         else:
