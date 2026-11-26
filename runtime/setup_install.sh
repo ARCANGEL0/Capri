@@ -313,7 +313,7 @@ tailscale_self_host() {
 }
 
 install_cli() {
-  local bin_dir cli_path pairing_dir pairing_file pairing_tmp pairing_host
+  local bin_dir cli_path capri_path pairing_dir pairing_file pairing_tmp pairing_host
   local q_pairing q_scope q_user q_service q_python
   pairing_dir="$USER_HOME/.config/capri-runtime"
   pairing_file="$pairing_dir/pairing.env"
@@ -323,6 +323,7 @@ install_cli() {
     bin_dir="$USER_HOME/.local/bin"
   fi
   cli_path="$bin_dir/capri-runtime"
+  capri_path="$bin_dir/capri"
   pairing_tmp="$(mktemp)"
   pairing_host="$(tailscale_self_host)"
   printf 'CAPRI_RUNTIME_TOKEN=%s\nCAPRI_RUNTIME_DEVICE=%s\nCAPRI_RUNTIME_PORT=%s\nCAPRI_RUNTIME_SERVE_PORT=%s\nCAPRI_RUNTIME_TAILSCALE_HOST=%s\n' "$RUNTIME_TOKEN" "$CAPRI_DEVICE" "$CAPRI_PORT" "$CAPRI_SERVE_PORT" "$pairing_host" > "$pairing_tmp"
@@ -332,6 +333,13 @@ install_cli() {
   else
     mkdir -p "$bin_dir" "$pairing_dir"
     install -m 0600 "$pairing_tmp" "$pairing_file"
+  fi
+  if [[ -f "$script_dir/capri" ]]; then
+    if [[ "$CAPRI_SCOPE" == 'system' && "$(uname -s)" == 'Linux' ]]; then
+      run_root install -m 0755 "$script_dir/capri" "$capri_path"
+    else
+      install -m 0755 "$script_dir/capri" "$capri_path"
+    fi
   fi
   rm -f "$pairing_tmp"
   printf -v q_pairing '%q' "$pairing_file"

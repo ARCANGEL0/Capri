@@ -1,0 +1,10 @@
+#!/usr/bin/env bash
+set -euo pipefail
+runner="${1:-}"
+shift || true
+case "$runner" in
+  codex) exec "$(command -v codex)" "$@" ;;
+  claude|nclaude) exec "$(command -v "$runner")" "$@" ;;
+  opencode|ghost|codewhale|dsh|kimi|gemini|cline) exec "$(command -v "$runner")" "$@" ;;
+  *) printf 'Usage: capri {codex|claude|nclaude|opencode|ghost|codewhale|dsh|kimi|gemini|cline} [args...]\n' >&2; exit 2 ;;
+esac
