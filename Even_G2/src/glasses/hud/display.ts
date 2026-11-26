@@ -35,7 +35,7 @@ export type HudView =
   | { kind: 'devices'; data: { title: string; page: { index: number; count: number }; rows: Array<{ name: string; ip: string; online: boolean; available: boolean; ssh?: string }>; selected: number; footer: { left: string; right?: string } } }
   | { kind: 'actions'; data: { title: string; page: { index: number; count: number }; rows: Array<{ label: string; hint?: string }>; selected: number; footer: { left: string; right?: string } } }
   | { kind: 'list'; data: { title: string; page: { index: number; count: number }; rows: Array<{ label: string; value?: string; meta?: string; activity?: string; approval?: boolean }>; selected: number; footer: { left: string; right?: string } } }
-  | { kind: 'live'; data: { title: string; page: { index: number; count: number }; lines: string[]; active: boolean; loading?: boolean; loadingFrame?: number; footer: { left: string; right?: string } } }
+  | { kind: 'live'; data: { title: string; page: { index: number; count: number }; lines: string[]; active: boolean; loading?: boolean; loadingFrame?: number; status?: string; footer: { left: string; right?: string } } }
   | { kind: 'approval'; data: { title: string; page: { index: number; count: number }; prompt: string; options: Array<{ label: string }>; selected: number; footer: { left: string; right?: string } } }
   | BoxView
   | { kind: 'splash'; progress: number; text: string }

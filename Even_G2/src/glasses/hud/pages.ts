@@ -23,12 +23,28 @@ function icon(p: Pixels, name: IconName, x: number, y: number, value = BRIGHT): 
 
 /** Capri prompt glyph "> " at (x, y). */
 /** Header band: beveled corners, Capri mark, page dots and circuit traces. */
-function header(p: Pixels, title: string, _mark: { index: number; count: number } | null): void {
+function scrollText(p: Pixels, value: string, px: number, maxWidth: number, frame: number): string {
+  const clean = value.replace(/\s+/g, ' ').trim()
+  if (!clean || p.textWidth(clean, px) <= maxWidth) return clean
+  const gap = '   ·   '
+  const loop = `${clean}${gap}${clean}`
+  const offset = frame % (clean.length + gap.length)
+  let visible = loop.slice(offset)
+  while (visible && p.textWidth(visible, px) > maxWidth) visible = visible.slice(0, -1)
+  return visible
+}
+
+function header(p: Pixels, title: string, _mark: { index: number; count: number } | null, status = '', frame = 0): void {
   if (hudBadge) p.image(hudBadge, 22, 8, 32)
   else p.svg(CAPRI_MARK, 24, 35, 4, 18, BRIGHT, 1.2)
   const titleSize = title.startsWith('CAPRI') ? 16 : TITLE_PX
   const titleWidth = title.startsWith('CAPRI') ? 450 : 360
-  p.text(p.fit(title, titleSize, titleWidth), 58, 18, titleSize)
+  const titleText = p.fit(title, titleSize, titleWidth)
+  p.text(titleText, 58, 18, titleSize)
+  if (status) {
+    const statusX = Math.min(290, 70 + p.textWidth(titleText, titleSize))
+    p.text(scrollText(p, status, 12, RIGHT - statusX, frame), statusX, 20, 12, 10)
+  }
   p.line(12, 45, 356, 45, BRIGHT, 1)
   p.path([[356, 45], [368, 37], [548, 37]], BRIGHT, 1)
 }
@@ -187,11 +203,12 @@ export interface LiveData {
   active: boolean
   loading?: boolean
   loadingFrame?: number
+  status?: string
   footer: { left: string; right?: string }
 }
 
 export function drawLive(p: Pixels, d: LiveData): void {
-  header(p, d.title, d.page)
+  header(p, d.title, d.page, d.status, d.loadingFrame ?? 0)
 
   if (d.loading) {
     const frames = ['·  ·  ·', '○  ·  ·', '·  ○  ·', '·  ·  ○']
@@ -208,6 +225,7 @@ export function drawLive(p: Pixels, d: LiveData): void {
     p.text(p.fit(line, 18, 540), 12, y + i * 24, 18, tone)
   })
 
+  p.line(12, 224, 564, 224, 8, 1)
   p.text(p.fit(d.footer.left, 12, 540), 12, FOOTER_Y, 12, 10)
 }
 

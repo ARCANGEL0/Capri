@@ -123,9 +123,9 @@ function findAction(lines: string[]): string {
     .replace(/^['"`]|['"`]$/g, '')
     .replace(/^.*\//, (path) => path.split('/').at(-1) ?? path)
     .replace(/\s+/g, ' ')
-    .slice(0, 23)
+    .slice(0, 240)
   const state = completed ? 'TOOL DONE' : 'RUNNING'
-  return useful ? `${state} · ${current.name} · ${useful}` : `${state} · ${current.name}`
+  return useful ? `${state}: ${current.name} ${useful}` : `${state}: ${current.name}`
 }
 
 function isToolCall(line: string): boolean {

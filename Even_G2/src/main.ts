@@ -366,6 +366,7 @@ function updatePhoneUI(immediate = false): void {
     terminalText,
     agentScreenText: activeSession && activeSession.agent !== 'terminal' ? formatChat() : '',
     agentScreenHeader: activeSession && activeSession.agent !== 'terminal' ? 'LIVE' : '',
+    draftText: promptText,
     pendingApproval,
     status,
     recording: audioActive,
@@ -1454,7 +1455,8 @@ async function flushLiveRender(activeHud: Hud): Promise<void> {
         active: true,
         loading: sessionLoading,
         loadingFrame,
-        footer: { left: status },
+        status,
+        footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
     }
     await activeHud.show(view)
@@ -1944,7 +1946,20 @@ function viewForScreen(): HudView | undefined {
       },
     }
   }
-  if (screen === 'new_agent' || screen === 'resume' || screen === 'runtimes' || screen === 'review' || screen === 'more') {
+  if (screen === 'review') {
+    return {
+      kind: 'approval',
+      data: {
+        title,
+        page: { index: 0, count: 1 },
+        prompt: promptText || 'No transcript was captured.',
+        options: visibleRows().map((row) => ({ label: row.label })),
+        selected: selectedRow,
+        footer: { left: status },
+      },
+    }
+  }
+  if (screen === 'new_agent' || screen === 'resume' || screen === 'runtimes' || screen === 'more') {
     const listRows = visibleRows().map((row) => {
       if (row.action !== 'session') return { label: row.label }
       const session = sessions.find((item) => item.id === row.value)
@@ -1980,7 +1995,8 @@ function viewForScreen(): HudView | undefined {
         active: true,
         loading: sessionLoading,
         loadingFrame,
-        footer: { left: status },
+        status,
+        footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
     }
   }

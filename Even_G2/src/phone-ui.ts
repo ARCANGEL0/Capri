@@ -80,6 +80,7 @@ export type PhoneSnapshot = {
   terminalText: string
   agentScreenText: string
   agentScreenHeader: string
+  draftText: string
   pendingApproval?: PhoneApproval
   status: string
   recording: boolean
@@ -886,8 +887,13 @@ export class PhoneUI {
       : ''
     const models = state.modelsByDevice[state.activeSessionDeviceName ?? '']?.[active.agent] ?? []
     const modelControl = models.length ? `<label class="field-label compact-field">Model<select data-action="change-model" data-device="${attr(state.activeSessionDeviceName ?? '')}">${this.modelOptions(models, state.activeModel)}</select></label>` : ''
+    const draft = state.draftText.trim()
     const reply = state.agentScreenText.trim() || 'Waiting for model response…'
+    const draftCard = draft && /TRANSCRIPT READY|REVIEW \/ PROMPT|REVIEW \/ COMMAND/i.test(state.status)
+      ? `<section class="voice-draft" aria-live="polite"><div class="section-title"><h3>Transcript</h3><span>Review before sending</span></div><pre>${escapeHtml(draft)}</pre></section>`
+      : ''
     return `<section class="active-session-card"><div class="session-topline"><span class="agent-tag">${escapeHtml(agentName(active.agent))}</span><span class="live-pill">LIVE</span><span class="session-status">${escapeHtml(state.status)}</span></div><div class="session-reply" aria-live="polite"><pre class="chat-feed">${escapeHtml(reply)}</pre></div>${modelControl}</section>
+      ${draftCard}
       ${approval}
       ${output}
       <form class="composer" data-form="composer"><textarea data-action="composer" data-editor="1" rows="3" placeholder="Message the agent…" aria-label="Message the agent">${escapeHtml(this.currentDraft)}</textarea><div class="composer-actions"><button class="button" type="button" data-action="talk" ${state.audioBusy && !state.recording ? 'disabled' : ''}>${escapeHtml(micLabel)}</button><button class="button button-primary send-button" type="submit">Send</button></div></form>
