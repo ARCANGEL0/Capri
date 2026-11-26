@@ -1494,7 +1494,7 @@ function formatChat(): string {
     const chunks = agentReplyText().split('\n').flatMap((line) => wrapLine(line, 50))
     const end = Math.max(0, chunks.length - chatOffset)
     const lines = chunks.slice(Math.max(0, end - visibleChatLines()), end)
-    return lines.length ? lines.join('\n') : 'Waiting for agent response…'
+    return lines.length ? lines.join('\n') : (status === 'LIVE  ·  TAP TO TALK' ? 'No model reply yet.' : status)
   }
   const flattened = chatHistory.flatMap((line) => wrapLine(`${line.kind === 'in' ? 'YOU › ' : line.kind === 'sys' ? '· ' : ''}${line.text}`, 50))
   const end = Math.max(0, flattened.length - chatOffset)

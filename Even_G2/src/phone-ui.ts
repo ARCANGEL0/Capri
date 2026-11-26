@@ -913,7 +913,6 @@ export class PhoneUI {
   }
 
   private restoreScroll(previousMainScroll: number, previousTerminalScroll: number, previousFeedScroll: number, previousGlassesScroll: number): void {
-    const settings = this.snapshot?.settings
     const main = this.root.querySelector<HTMLElement>('.phone-main')
     const terminal = this.root.querySelector<HTMLElement>('.terminal-output')
     const feed = this.root.querySelector<HTMLElement>('.chat-feed')
@@ -924,15 +923,9 @@ export class PhoneUI {
       this.mainScrollTop = main.scrollTop
       this.restoringMainScroll = false
     }
-    if (settings?.autoScroll) {
-      if (terminal) terminal.scrollTop = terminal.scrollHeight
-      if (feed) feed.scrollTop = feed.scrollHeight
-      if (glasses) glasses.scrollTop = glasses.scrollHeight
-    } else {
-      if (terminal) terminal.scrollTop = Math.min(previousTerminalScroll, terminal.scrollHeight)
-      if (feed) feed.scrollTop = Math.min(previousFeedScroll, feed.scrollHeight)
-      if (glasses) glasses.scrollTop = Math.min(previousGlassesScroll, glasses.scrollHeight)
-    }
+    if (terminal) terminal.scrollTop = Math.min(previousTerminalScroll, terminal.scrollHeight)
+    if (feed) feed.scrollTop = Math.min(previousFeedScroll, feed.scrollHeight)
+    if (glasses) glasses.scrollTop = Math.min(previousGlassesScroll, glasses.scrollHeight)
     if (this.restoreFrame !== undefined) {
       window.cancelAnimationFrame(this.restoreFrame)
       this.restoreFrame = undefined
