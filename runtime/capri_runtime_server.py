@@ -108,8 +108,21 @@ class ManagedSession:
         self.done = False
         self.approval = None
         self.text_tail = ""
+        self.startup_prompt_tail = ""
+        self.startup_update_skipped = False
+        self.startup_update_scheduled = False
         self.reader = threading.Thread(target=self._read_output, daemon=True)
         self.reader.start()
+
+    def _skip_codex_update_prompt(self):
+        time.sleep(0.35)
+        with self.lock:
+            if self.done or self.process.poll() is not None:
+                return
+            try:
+                os.write(self.master_fd, b"2\n")
+            except OSError:
+                return
 
     def _read_output(self):
         try:
@@ -126,11 +139,26 @@ class ManagedSession:
                 if not data:
                     break
                 text = data.decode("utf-8", "replace")
+                suppress_startup_prompt = False
+                if self.kind == "agent":
+                    clean = terminal_text(text)
+                    self.startup_prompt_tail = (self.startup_prompt_tail + clean)[-4000:]
+                    if (
+                        self.agent == "codex"
+                        and not self.startup_update_skipped
+                        and codex_update_prompt(self.startup_prompt_tail)
+                    ):
+                        self.startup_update_skipped = True
+                        suppress_startup_prompt = True
+                        if not self.startup_update_scheduled:
+                            self.startup_update_scheduled = True
+                            threading.Thread(target=self._skip_codex_update_prompt, daemon=True).start()
                 with self.changed:
-                    self.sequence += 1
-                    self.events.append((self.sequence, {"text": text}))
+                    if not suppress_startup_prompt:
+                        self.sequence += 1
+                        self.events.append((self.sequence, {"text": text}))
                     if self.kind == "agent":
-                        self.text_tail = (self.text_tail + terminal_text(text))[-8000:]
+                        self.text_tail = (self.text_tail + clean)[-8000:]
                         detected = detect_approval(self.agent, self.text_tail)
                         if detected and (not self.approval or detected["prompt"] != self.approval["prompt"]):
                             self.approval = detected
@@ -265,6 +293,25 @@ def terminal_text(text):
     value = re.sub(r"\x1b\[[0-?]*[ -/]*[@-~]", "", value)
     value = re.sub(r"\x1b[()][0-2A-Z]", "", value)
     return re.sub(r"[\x00-\x08\x0b\x0c\x0e-\x1f]", "", value).replace("\r", "\n")
+
+
+def codex_update_prompt(text):
+    normalized = re.sub(r"\s+", " ", text).strip().lower()
+    return bool(re.search(
+        r"updat(?:e)?\s+available.*1\.\s*update\s+now.*2\.\s*skip.*"
+        r"3\.\s*skip\s*until\s*next\s*version.*enter\s+continue",
+        normalized,
+    ))
+
+
+def codex_update_prompt_output(text):
+    normalized = re.sub(r"\s+", " ", terminal_text(text)).strip().lower()
+    return bool(
+        re.search(r"updat(?:e)?\s+available", normalized)
+        and re.search(r"1\.\s*update\s+now", normalized)
+        and "skip" in normalized
+        and "enter" in normalized
+    )
 
 
 def detect_approval(agent, text):
@@ -954,11 +1001,18 @@ def build_agent_command(agent, runtime, model, resume_id):
         if model:
             command.extend(["--model", model])
     elif runner == "codex":
-        if resume_id:
+        capri = shutil.which("capri")
+        if capri:
+            command = [capri, "codex"]
+            if resume_id:
+                command.extend(["resume", resume_id])
+        elif resume_id:
             command.extend(["resume", resume_id])
+            command.append("--no-alt-screen")
+        else:
+            command.append("--no-alt-screen")
         if model:
             command.extend(["--model", model])
-        command.append("--no-alt-screen")
     elif runner == "opencode":
         if resume_id:
             command.extend(["--session", resume_id])
@@ -1330,6 +1384,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     done = session.done
             for number, payload in batch:
                 cursor = number
+                if (
+                    session.agent == "codex"
+                    and isinstance(payload, dict)
+                    and isinstance(payload.get("text"), str)
+                    and codex_update_prompt_output(payload["text"])
+                ):
+                    continue
                 frame = f"id: {number}\ndata: {json.dumps(payload, ensure_ascii=False)}\n\n"
                 try:
                     self.wfile.write(frame.encode("utf-8"))
