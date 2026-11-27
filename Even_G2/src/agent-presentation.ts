@@ -15,7 +15,7 @@ const ACTION_LINE = new RegExp(`^(?:[⏺•*·>]\\s*)?(?:Running|Executing|Readi
 const NATURAL_ACTION = /^(?:[⏺•*·>]\s*)?(Running|Executing|Reading|Editing|Writing|Searching|Fetching|Calling|Using|Waiting for)\s+(.+)$/i
 
 export function presentAgentScreen(raw: string): AgentPresentation {
-  const source = raw.split('\n').map((line) => line.replace(/\s+/g, ' ').trim()).filter(Boolean)
+  const source = raw.split('\n').map((line) => line.replace(/[ \t]+/g, ' ').trim()).filter(Boolean)
   const interactive = detectInteractivePrompt(raw)
   const action = findAction(source)
   const visible: string[] = []

@@ -85,6 +85,21 @@ function readSttSettings(): SttSettings {
   try { return parseSttSettings(localStorage.getItem(STT_SETTINGS_KEY)) } catch { return parseSttSettings(null) }
 }
 
+async function hydratePersistentSettings(): Promise<void> {
+  if (!bridge) return
+  try {
+    const stored = await bridge.getLocalStorage(STT_SETTINGS_KEY)
+    const parsed = parseSttSettings(stored)
+    if (parsed.provider || parsed.apiKey || parsed.model || parsed.language) {
+      sttSettings = parsed
+      sttStatus = isSttReady(sttSettings) ? `${sttSettings.provider} is ready` : sttStatus
+      updatePhoneUI(true)
+    }
+  } catch {
+    // Web fallback remains available when native storage is unavailable.
+  }
+}
+
 function parseRuntimeDevices(raw: string | null): PhoneRuntimeDevice[] | undefined {
   if (!raw) return []
   try {
@@ -392,6 +407,7 @@ function savePhoneSettings(next: CapriSettings): void {
 function savePhoneStt(next: SttSettings): void {
   sttSettings = { ...next, apiKey: next.apiKey.trim(), model: next.model.trim(), language: next.language.trim() }
   try { localStorage.setItem(STT_SETTINGS_KEY, JSON.stringify(sttSettings)) } catch { /* keep the setting in memory */ }
+  void bridge?.setLocalStorage(STT_SETTINGS_KEY, JSON.stringify(sttSettings)).catch(() => {})
   sttStatus = isSttReady(sttSettings) ? `${sttSettings.provider} is ready` : 'Choose a provider and API key to enable voice input'
   updatePhoneUI(true)
 }
@@ -462,6 +478,7 @@ function resetLocalStorage(): void {
 
 async function boot(): Promise<void> {
   bridge = await waitForEvenAppBridge()
+  await hydratePersistentSettings()
   runtimeDevicesCache = readBrowserRuntimeDevices()
   primeConfiguredDevices()
   void hydrateRuntimeDevices().then(() => {
@@ -1497,7 +1514,7 @@ function formatChat(): string {
     if (audioBusy && status === 'TRANSCRIBING VOICE...') return 'TRANSCRIBING VOICE\nYour transcript will appear for review'
     const reply = agentReplyText().split('\n').map(readableReplyLine).join('\n')
     const userLines = chatHistory.filter((line) => line.kind === 'in').map((line) => `YOU> ${line.text}`).join('\n')
-    const transcript = [userLines, reply ? `AI> ${reply}` : ''].filter(Boolean).join('\n\n')
+    const transcript = [userLines, reply ? `AGENT> ${reply}` : ''].filter(Boolean).join('\n\n')
     const chunks = transcript.split('\n').flatMap((line) => wrapLine(line, 50))
     const end = Math.max(0, chunks.length - chatOffset)
     const lines = chunks.slice(Math.max(0, end - visibleChatLines()), end)
