@@ -833,7 +833,11 @@ async function phoneStartTerminal(deviceName: string): Promise<void> {
 async function phoneSendInput(deviceName: string, text: string, terminal: boolean): Promise<void> {
   const selected = devices.find((item) => item.name === deviceName)
   const device = activeTargetDevice?.name === deviceName ? activeSessionDevice : selected?.available ? selected : undefined
-  if (!device || !activeSession) return
+  if (!device || !activeSession) {
+    status = 'No active Capri session is attached'
+    updatePhoneUI(true)
+    return
+  }
   activeDevice = device
   try {
     await sendInput(text, terminal)
@@ -1491,7 +1495,10 @@ function formatChat(): string {
   if (activeSession && activeSession.agent !== 'terminal') {
     if (audioActive) return '● LISTENING\nSpeak your instruction\nTap once to stop · review before send'
     if (audioBusy && status === 'TRANSCRIBING VOICE...') return 'TRANSCRIBING VOICE\nYour transcript will appear for review'
-    const chunks = agentReplyText().split('\n').flatMap((line) => wrapLine(line, 50))
+    const reply = agentReplyText().split('\n').map(readableReplyLine).join('\n')
+    const userLines = chatHistory.filter((line) => line.kind === 'in').map((line) => `YOU> ${line.text}`).join('\n')
+    const transcript = [userLines, reply ? `AI> ${reply}` : ''].filter(Boolean).join('\n\n')
+    const chunks = transcript.split('\n').flatMap((line) => wrapLine(line, 50))
     const end = Math.max(0, chunks.length - chatOffset)
     const lines = chunks.slice(Math.max(0, end - visibleChatLines()), end)
     return lines.length ? lines.join('\n') : (status === 'LIVE  ·  TAP TO TALK' ? 'No model reply yet.' : status)
@@ -1501,6 +1508,10 @@ function formatChat(): string {
   const lines = flattened.slice(Math.max(0, end - visibleChatLines()), end)
   const viewStatus = chatOffset ? `${status}  /  HISTORY ↑` : status
   return [`${viewStatus}`, '', ...lines].join('\n')
+}
+
+function readableReplyLine(line: string): string {
+  return line.replace(/([;!?])(?=[A-Za-z])/g, '$1\n').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim()
 }
 
 function formatTerminal(): string {
@@ -1640,7 +1651,7 @@ function handleAudio(event: EvenHubEvent): void {
 async function sendInput(text: string, terminal: boolean): Promise<void> {
   const session = activeSession
   const device = activeSessionDevice ?? activeDevice
-  if (!device || !session) return
+  if (!device || !session) throw new Error('No active Capri session is attached')
   const input = `${text}\n`
   const response = await postSessionInput(device, session.id, input)
   if (!response) throw new Error('Input was not accepted')

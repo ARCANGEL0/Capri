@@ -890,7 +890,7 @@ export class PhoneUI {
     const draft = state.draftText.trim()
     const reply = state.agentScreenText.trim() || 'Waiting for model response…'
     const draftCard = draft && /TRANSCRIPT READY|REVIEW \/ PROMPT|REVIEW \/ COMMAND/i.test(state.status)
-      ? `<section class="voice-draft" aria-live="polite"><div class="section-title"><h3>Transcript</h3><span>Review before sending</span></div><pre>${escapeHtml(draft)}</pre></section>`
+      ? `<section class="voice-draft" aria-live="polite"><div class="section-title"><h3>Transcript</h3><span>Review before sending</span></div><pre>${escapeHtml(draft)}</pre><div class="voice-draft-actions"><button class="button button-primary" type="button" data-action="send">Send transcript</button><button class="button" type="button" data-action="cancel">Rewrite</button></div></section>`
       : ''
     return `<section class="active-session-card"><div class="session-topline"><span class="agent-tag">${escapeHtml(agentName(active.agent))}</span><span class="live-pill">LIVE</span><span class="session-status">${escapeHtml(state.status)}</span></div><div class="session-reply" aria-live="polite"><pre class="chat-feed">${escapeHtml(reply)}</pre></div>${modelControl}</section>
       ${draftCard}

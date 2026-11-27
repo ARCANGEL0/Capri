@@ -158,6 +158,9 @@ button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-
 .session-status { overflow: hidden; margin-left: auto; color: var(--muted); font-family: "JetBrains Mono", monospace; font-size: 10px; text-overflow: ellipsis; white-space: nowrap; }
 .session-reply { padding: 15px 16px; }
 .session-reply .chat-feed { display: block; max-height: 360px; min-height: 120px; overflow: auto; margin: 0; color: var(--text); font-family: Inter, sans-serif; font-size: 14px; line-height: 1.6; white-space: pre-wrap; word-break: break-word; }
+.voice-draft { border: 1px solid var(--red); padding: 14px; margin: 12px 0; }
+.voice-draft pre { white-space: pre-wrap; overflow-wrap: anywhere; max-height: 18rem; overflow: auto; line-height: 1.55; }
+.voice-draft-actions { display: flex; gap: 10px; margin-top: 12px; }
 .compact-field { margin: 0 16px 14px; }
 
 .approval-card { margin: 0 0 13px; padding: 16px; border: 1px solid var(--pink); background: rgba(255, 53, 85, .06); clip-path: polygon(0 10px, 10px 0, 100% 0, 100% calc(100% - 10px), calc(100% - 10px) 100%, 0 100%); }
