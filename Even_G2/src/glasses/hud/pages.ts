@@ -203,12 +203,13 @@ export interface LiveData {
   active: boolean
   loading?: boolean
   loadingFrame?: number
+  statusFrame?: number
   status?: string
   footer: { left: string; right?: string }
 }
 
 export function drawLive(p: Pixels, d: LiveData): void {
-  header(p, d.title, d.page, d.status, d.loadingFrame ?? 0)
+  header(p, d.title, d.page, d.status, d.statusFrame ?? 0)
 
   if (d.loading) {
     const frames = ['·  ·  ·', '○  ·  ·', '·  ○  ·', '·  ·  ○']
@@ -218,14 +219,16 @@ export function drawLive(p: Pixels, d: LiveData): void {
     return
   }
 
-  const start = Math.max(0, d.lines.length - (d.active ? 8 : 5))
-  const y = 70
+  // The chat frame ends at the divider on y=224. Eight lines at 19px stay
+  // inside it, so replies can never paint over the footer.
+  const visible = d.active ? 8 : 5
+  const start = Math.max(0, d.lines.length - visible)
   d.lines.slice(start).forEach((line, i) => {
     const tone = d.active && i === d.lines.length - start - 1 ? BRIGHT : 11
-    p.text(p.fit(line, 18, 540), 12, y + i * 24, 18, tone)
+    p.text(p.fit(line, 16, 540), 12, 66 + i * 19, 16, tone)
   })
 
-  p.line(12, 224, 564, 224, 8, 1)
+  p.line(12, 224, 564, 224, 10, 1)
   p.text(p.fit(d.footer.left, 12, 540), 12, FOOTER_Y, 12, 10)
 }
 

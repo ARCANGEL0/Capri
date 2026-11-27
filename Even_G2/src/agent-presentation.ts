@@ -19,7 +19,7 @@ export function presentAgentScreen(raw: string): AgentPresentation {
   const interactive = detectInteractivePrompt(raw)
   const action = findAction(source)
   const visible: string[] = []
-  const markerMode = source.some((line) => /^(?:[•⏺›❯])(?:\s|$)/.test(line))
+  const markerMode = source.some((line) => /^(?:[•⏺›❯●])(?:\s|$)/.test(line))
   let assistantBlock = !markerMode
   let inReasoning = false
   let inToolResult = false
@@ -27,7 +27,7 @@ export function presentAgentScreen(raw: string): AgentPresentation {
 
   for (const originalLine of source) {
     let rawLine = originalLine
-    const blockMarker = originalLine.match(/^([•⏺›❯])\s*(.*)$/)
+    const blockMarker = originalLine.match(/^([•⏺›❯●])\s*(.*)$/)
     if (markerMode && blockMarker) {
       const marker = blockMarker[1]
       const content = blockMarker[2].trim()
@@ -72,10 +72,10 @@ export function presentAgentScreen(raw: string): AgentPresentation {
     }
     if (isToolOutput(line)) continue
     if (inToolResult) {
-      if (!isAssistantMessage(rawLine)) continue
+      if (!isAssistantMessage(originalLine)) continue
       inToolResult = false
     }
-    const clean = line.replace(/^(?:[>›⏺•]\s*)/, '').trim()
+    const clean = line.replace(/^(?:[>›⏺•●]\s*)/, '').trim()
     if (isInterfaceChrome(clean) || isUnsafeOrInternal(clean) || isCodeOrToolLine(clean)) continue
     if (clean && visible.at(-1) !== clean) visible.push(clean)
   }
@@ -133,7 +133,10 @@ function isToolCall(line: string): boolean {
 }
 
 function isAssistantMessage(line: string): boolean {
-  return /^(?:[>›⏺]\s*)\S/.test(line) && !isToolCall(line)
+  return /^(?:[>›⏺•●]\s*)\S/.test(line)
+    && !isToolCall(line)
+    && !ACTION_LINE.test(line)
+    && !NATURAL_ACTION.test(line)
 }
 
 function isToolOutput(line: string): boolean {

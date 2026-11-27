@@ -5,6 +5,7 @@ import {
 } from '@evenrealities/even_hub_sdk'
 import { pxTruncate } from '@evenrealities/pretext'
 import { detectInteractivePrompt, presentAgentScreen, type InteractivePrompt } from './agent-presentation'
+import { AgentOutput } from './agent-output'
 import { TerminalScreen } from './terminal-screen'
 import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
@@ -246,6 +247,12 @@ function writeChatTranscript(device: string, savedId: string, transcript: string
   } catch { /* transcript recovery is optional */ }
 }
 
+function setAgentTranscript(value: string): void {
+  agentTranscript = value
+  agentOutput = new AgentOutput()
+  agentOutput.feed(value)
+}
+
 function savedApprovalIds(): string[] {
   try {
     const value = JSON.parse(localStorage.getItem(APPROVAL_SESSIONS_KEY) ?? '[]')
@@ -285,6 +292,7 @@ let streamAbort: AbortController | undefined
 let terminalText = ''
 let agentTerminal = new TerminalScreen()
 let agentTranscript = ''
+let agentOutput = new AgentOutput()
 let agentScreenHistory: string[] = []
 let lastAgentScreen = ''
 let screenHistoryTimer: number | undefined
@@ -302,6 +310,8 @@ let chatAutoFollowing = true
 let terminalOffset = 0
 let sessionLoading = false
 let loadingFrame = 0
+let statusFrame = 0
+let statusTimer: number | undefined
 let loadingTimer: number | undefined
 let sttStatus = ''
 let sttTesting = false
@@ -348,6 +358,15 @@ function setSessionLoading(next: boolean): void {
     loadingFrame = (loadingFrame + 1) % 4
     void redraw()
   }, 260)
+}
+
+function startStatusScroll(): void {
+  if (statusTimer !== undefined) return
+  statusTimer = window.setInterval(() => {
+    if (screen !== 'chat' && screen !== 'terminal') return
+    statusFrame = (statusFrame + 1) % 65536
+    renderLive(true)
+  }, 180)
 }
 
 function markSessionAttached(): void {
@@ -492,6 +511,7 @@ async function boot(): Promise<void> {
   }
   hud = new Hud(runtime)
   bridge.onEvenHubEvent(handleEvent)
+  startStatusScroll()
   lensReady = true
   window.addEventListener('pagehide', cleanup)
 
@@ -902,7 +922,7 @@ async function phoneDisconnect(): Promise<void> {
   pendingApproval = undefined
   pendingInput = undefined
   lastInputPrompt = ''
-  agentTranscript = ''
+  setAgentTranscript('')
   setSessionLoading(false)
   stopAgentScreenHistory()
   agentScreenHistory = []
@@ -937,7 +957,7 @@ async function phoneApprove(choice: string): Promise<void> {
     pendingApproval = undefined
     pendingInput = undefined
     lastInputPrompt = ''
-    agentTranscript = ''
+    setAgentTranscript('')
     clearSavedApproval()
     status = `Approval sent: ${choice}`
   } catch (error) {
@@ -1084,7 +1104,7 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
     if (savedRuntime) {
       activeSession = { id: savedRuntime, agent, title: sessions.find((item) => item.id === resumeID)?.title ?? agentLabel(agent), runtime }
       activeSavedSessionId = resumeID
-      agentTranscript = readChatTranscript(activeDevice.name, resumeID)
+      setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
       agentTerminal.reset()
       setSessionLoading(!agentTranscript)
       activeSessionDevice = activeDevice
@@ -1173,7 +1193,7 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
     activeAgent = { ...activeAgent, id: agent }
     activeModel = model
     agentTerminal.reset()
-    agentTranscript = readChatTranscript(activeDevice.name, resumeID)
+    setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
     markSessionAttached()
     stopAgentScreenHistory()
     agentScreenHistory = []
@@ -1245,7 +1265,7 @@ async function startTerminal(): Promise<void> {
     activeSessionDevice = activeDevice
     activeModel = ''
     agentTerminal.reset()
-    agentTranscript = ''
+    setAgentTranscript('')
     setSessionLoading(false)
     stopAgentScreenHistory()
     terminalText = `${target ? 'Tailscale SSH' : 'Capri shell'}  /  ${target?.name ?? activeDevice.name}\n`
@@ -1312,7 +1332,10 @@ function startOutputStream(sessionID: string, device: Device | undefined = activ
 
 function enqueueOutput(text: string): void {
   if (activeSession?.agent !== 'terminal') {
-    agentTranscript = `${agentTranscript}${sanitizeOutput(text)}`.slice(-8_000_000)
+    // Keep the raw stream: cursor moves carried by it are applied by
+    // AgentOutput, so redrawn lines stay readable instead of being glued.
+    agentTranscript = `${agentTranscript}${text}`.slice(-8_000_000)
+    agentOutput.feed(text)
     agentTerminal.feed(text)
     if (settings.autoScroll && chatAutoFollowing) chatOffset = 0
     void renderLive()
@@ -1396,11 +1419,12 @@ function startAgentScreenHistory(): void {
       stopAgentScreenHistory()
       return
     }
-    const current = presentAgentScreen(agentTranscript || agentTerminal.text())
+    const screenText = agentOutput.text() || agentTerminal.text()
+    const current = presentAgentScreen(screenText)
     if (sessionLoading && current.response) setSessionLoading(false)
     if (current.action) status = current.action
     else if (!pendingApproval && screen === 'chat' && /^(RUNNING|TOOL DONE)\b/.test(status)) status = 'LIVE  ·  TAP TO TALK'
-    const interactive = detectInteractivePrompt(agentTranscript || agentTerminal.text())
+    const interactive = detectInteractivePrompt(screenText)
     if (interactive && interactive.prompt !== lastInputPrompt && !pendingApproval && activeSession) {
       showInteractivePrompt(interactive)
     }
@@ -1443,21 +1467,21 @@ function appendTerminal(current: string, text: string): string {
   return value
 }
 
-function renderLive(): void {
+function renderLive(skipPhoneUpdate = false): void {
   const activeHud = hud
   if (!activeRuntime || !activeHud || (screen !== 'chat' && screen !== 'terminal')) {
-    updatePhoneUI()
+    if (!skipPhoneUpdate) updatePhoneUI()
     return
   }
   if (renderTimer !== undefined) return
   renderTimer = window.setTimeout(() => {
     renderTimer = undefined
-    void flushLiveRender(activeHud)
+    void flushLiveRender(activeHud, skipPhoneUpdate)
   }, 120)
 }
 
-async function flushLiveRender(activeHud: Hud): Promise<void> {
-  updatePhoneUI()
+async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise<void> {
+  if (!skipPhoneUpdate) updatePhoneUI()
   if (renderInFlight) {
     renderDirty = true
     return
@@ -1476,6 +1500,7 @@ async function flushLiveRender(activeHud: Hud): Promise<void> {
         active: true,
         loading: sessionLoading,
         loadingFrame,
+        statusFrame,
         status,
         footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
@@ -1496,7 +1521,7 @@ async function flushLiveRender(activeHud: Hud): Promise<void> {
 }
 
 function formatAgentResponse(): string {
-  return presentAgentScreen(agentTranscript || agentTerminal.text()).response
+  return presentAgentScreen(agentOutput.text() || agentTerminal.text()).response
 }
 
 function agentReplyText(): string {
@@ -1528,7 +1553,9 @@ function formatChat(): string {
 }
 
 function readableReplyLine(line: string): string {
-  return line.replace(/([;!?])(?=[A-Za-z])/g, '$1\n').replace(/([a-z])([A-Z])/g, '$1 $2').replace(/\s+/g, ' ').trim()
+  // Spacing is repaired in AgentOutput from the PTY stream. Never invent word
+  // boundaries here: splitting camelCase or punctuation mangles real replies.
+  return line.replace(/\s+/g, ' ').trim()
 }
 
 function formatTerminal(): string {
@@ -1541,7 +1568,7 @@ function formatTerminal(): string {
 
 function visibleChatLines(): number {
   if (settings.hudDensity === 'spacious') return 5
-  if (settings.hudDensity === 'compact') return 9
+  if (settings.hudDensity === 'compact') return 8
   return DEFAULT_VISIBLE_CHAT_LINES
 }
 
@@ -2023,6 +2050,7 @@ function viewForScreen(): HudView | undefined {
         active: true,
         loading: sessionLoading,
         loadingFrame,
+        statusFrame,
         status,
         footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
@@ -2172,4 +2200,6 @@ function cleanup(): void {
   streamAbort?.abort()
   unsubscribeHub?.()
   stopAgentScreenHistory()
+  if (statusTimer !== undefined) window.clearInterval(statusTimer)
+  statusTimer = undefined
 }

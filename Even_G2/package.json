@@ -1,12 +1,13 @@
 {
   "name": "capri",
   "private": true,
-  "version": "1.2.8",
+  "version": "1.2.9",
   "type": "module",
   "description": "Cyberdeck coding agent console for Even Realities G2",
   "scripts": {
     "dev": "vite",
     "build": "tsc --noEmit -p tsconfig.json && vite build",
+    "test": "node scripts/test-chat.mjs",
     "pack": "npm run build && evenhub pack app.json dist -o capri.ehpk --sdk-ver 0.0.16"
   },
   "dependencies": {
