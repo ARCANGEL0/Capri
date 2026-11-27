@@ -13,6 +13,9 @@ try {
     entryPoints: [
       'src/agent-output.ts',
       'src/agent-presentation.ts',
+      'src/chat-view.ts',
+      'src/session-order.ts',
+      'src/phone-draft.ts',
     ],
     outdir: dir,
     format: 'esm',
@@ -23,6 +26,9 @@ try {
   })
   const { AgentOutput } = await import(pathToFileURL(join(dir, 'agent-output.js')).href)
   const { presentAgentScreen } = await import(pathToFileURL(join(dir, 'agent-presentation.js')).href)
+  const { maxScrollOffset, pageFromEnd } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
+  const { interleaveSessions, SESSION_AGENT_PRIORITY } = await import(pathToFileURL(join(dir, 'session-order.js')).href)
+  const { draftTextForSubmit } = await import(pathToFileURL(join(dir, 'phone-draft.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
   const redraw = new AgentOutput()
@@ -67,7 +73,29 @@ try {
   const reply = presentAgentScreen('● Use getUserInfo before calling requestJson.\n').response
   assert.equal(reply, 'Use getUserInfo before calling requestJson.')
 
-  console.log('chat pipeline: 8 checks passed')
+  // Chat paging must scroll the whole transcript, not just the last reply.
+  const transcriptLines = Array.from({ length: 40 }, (_, index) => `line ${index}`)
+  assert.equal(maxScrollOffset(transcriptLines.length, 7), 33)
+  assert.deepEqual(pageFromEnd(transcriptLines, 14, 7), transcriptLines.slice(19, 26))
+  assert.deepEqual(pageFromEnd(transcriptLines, 999, 7), transcriptLines.slice(0, 7))
+
+  // Saved sessions must stay discoverable across harnesses on short pages.
+  const recentSessions = [
+    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'claude', id: `c${index}`, updatedAt: 2000 - index })),
+    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'opencode', id: `o${index}`, updatedAt: 1000 - index })),
+    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'codex', id: `x${index}`, updatedAt: 900 - index })),
+  ]
+  const ordered = interleaveSessions(recentSessions, SESSION_AGENT_PRIORITY)
+  assert.equal(ordered.length, recentSessions.length)
+  assert.deepEqual(ordered.slice(0, 3).map((session) => session.agent), ['opencode', 'claude', 'codex'])
+  assert.equal(ordered[0].id, 'o0')
+  assert.equal(ordered[3].id, 'o1')
+
+  // The transcript Send button and the typed composer take different sources.
+  assert.equal(draftTextForSubmit('TRANSCRIPT READY  ·  SEND OR CANCEL', 'ship it', ''), 'ship it')
+  assert.equal(draftTextForSubmit('LIVE  ·  TAP TO TALK', 'old transcript', 'typed message'), 'typed message')
+
+  console.log('chat, scroll, session and send regressions passed')
 } finally {
   await rm(dir, { recursive: true, force: true })
 }

@@ -9,6 +9,8 @@ import { AgentOutput } from './agent-output'
 import { TerminalScreen } from './terminal-screen'
 import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
+import { maxScrollOffset, pageFromEnd, wrapLine } from './chat-view'
+import { interleaveSessions, SESSION_AGENT_PRIORITY } from './session-order'
 import { Hud, type HudView } from './glasses/hud/display'
 import { SPLASH_LAYOUT } from './glasses/hud/layouts'
 import {
@@ -331,6 +333,7 @@ function mountPhoneUI(): void {
     resumeSession: (deviceName, session, runtime) => void phoneResumeSession(deviceName, session, runtime),
     startTerminal: (deviceName) => void phoneStartTerminal(deviceName),
     sendInput: (deviceName, text, terminal) => void phoneSendInput(deviceName, text, terminal),
+    cancelReview: () => cancelReview(),
     sendTerminalKey: (deviceName, key) => void phoneSendTerminalKey(deviceName, key),
     disconnect: () => void phoneDisconnect(),
     changeModel: (deviceName, model) => void phoneChangeModel(deviceName, model),
@@ -522,16 +525,18 @@ async function boot(): Promise<void> {
         if (screen === 'chat' && activeSession?.agent !== 'terminal') {
           chatOffset = Math.max(0, chatOffset - visibleChatLines())
           if (chatOffset === 0) chatAutoFollowing = true
-        } else if (screen === 'chat') chatOffset = Math.max(0, chatOffset - 4)
-        else terminalOffset = Math.max(0, terminalOffset - 4)
+        } else if (screen === 'chat') chatOffset = Math.max(0, chatOffset - visibleChatLines())
+        else terminalOffset = Math.max(0, terminalOffset - visibleTerminalLines())
         void redraw(false)
       } else {
         if (screen === 'chat' && activeSession?.agent !== 'terminal') {
-          const maximum = Math.max(0, agentReplyLineCount() - visibleChatLines())
-          chatOffset = Math.min(maximum, chatOffset + visibleChatLines())
+          chatOffset = Math.min(maxScrollOffset(agentChatLineCount(), visibleChatLines()), chatOffset + visibleChatLines())
           chatAutoFollowing = false
-        } else if (screen === 'chat') chatOffset = Math.min(chatHistory.length * 4, chatOffset + 4)
-        else terminalOffset = Math.min(80, terminalOffset + 4)
+        } else if (screen === 'chat') {
+          chatOffset = Math.min(maxScrollOffset(chatHistory.length, visibleChatLines()), chatOffset + visibleChatLines())
+        } else {
+          terminalOffset = Math.min(maxScrollOffset(terminalText.split('\n').length, visibleTerminalLines()), terminalOffset + visibleTerminalLines())
+        }
         void redraw(false)
       }
       return
@@ -789,7 +794,7 @@ async function refreshPhoneCatalog(): Promise<void> {
     }
   }))
   phoneAgentsByDevice = Object.fromEntries(results.map(({ device, agents: deviceAgents }) => [device.name, deviceAgents]))
-  phoneSessionsByDevice = Object.fromEntries(results.map(({ device, sessions: deviceSessions }) => [device.name, deviceSessions]))
+  phoneSessionsByDevice = Object.fromEntries(results.map(({ device, sessions: deviceSessions }) => [device.name, sortSessions(deviceSessions)]))
   for (const device of devices) {
     phoneAgentsByDevice[device.name] ??= []
     phoneSessionsByDevice[device.name] ??= []
@@ -1501,7 +1506,7 @@ async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise
         loading: sessionLoading,
         loadingFrame,
         statusFrame,
-        status,
+        status: liveHistoryStatus(),
         footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
     }
@@ -1529,25 +1534,31 @@ function agentReplyText(): string {
   return [...agentScreenHistory, formatAgentResponse()].filter(Boolean).join('\n\n')
 }
 
-function agentReplyLineCount(): number {
-  return agentReplyText().split('\n').flatMap((line) => wrapLine(line, 50)).length
+function agentChatTranscript(): string {
+  const reply = agentReplyText().split('\n').map(readableReplyLine).join('\n')
+  const userLines = chatHistory.filter((line) => line.kind === 'in').map((line) => `YOU> ${line.text}`).join('\n')
+  return [userLines, reply ? `AGENT> ${reply}` : ''].filter(Boolean).join('\n\n')
+}
+
+function agentChatLineCount(): number {
+  return agentChatTranscript().split('\n').flatMap((line) => wrapLine(line, 50)).length
+}
+
+function liveHistoryStatus(): string {
+  const offset = screen === 'terminal' ? terminalOffset : chatOffset
+  return offset ? `${status}  ·  HISTORY ↑` : status
 }
 
 function formatChat(): string {
   if (activeSession && activeSession.agent !== 'terminal') {
     if (audioActive) return '● LISTENING\nSpeak your instruction\nTap once to stop · review before send'
     if (audioBusy && status === 'TRANSCRIBING VOICE...') return 'TRANSCRIBING VOICE\nYour transcript will appear for review'
-    const reply = agentReplyText().split('\n').map(readableReplyLine).join('\n')
-    const userLines = chatHistory.filter((line) => line.kind === 'in').map((line) => `YOU> ${line.text}`).join('\n')
-    const transcript = [userLines, reply ? `AGENT> ${reply}` : ''].filter(Boolean).join('\n\n')
-    const chunks = transcript.split('\n').flatMap((line) => wrapLine(line, 50))
-    const end = Math.max(0, chunks.length - chatOffset)
-    const lines = chunks.slice(Math.max(0, end - visibleChatLines()), end)
+    const chunks = agentChatTranscript().split('\n').flatMap((line) => wrapLine(line, 50))
+    const lines = pageFromEnd(chunks, chatOffset, visibleChatLines())
     return lines.length ? lines.join('\n') : (status === 'LIVE  ·  TAP TO TALK' ? 'No model reply yet.' : status)
   }
   const flattened = chatHistory.flatMap((line) => wrapLine(`${line.kind === 'in' ? 'YOU › ' : line.kind === 'sys' ? '· ' : ''}${line.text}`, 50))
-  const end = Math.max(0, flattened.length - chatOffset)
-  const lines = flattened.slice(Math.max(0, end - visibleChatLines()), end)
+  const lines = pageFromEnd(flattened, chatOffset, visibleChatLines())
   const viewStatus = chatOffset ? `${status}  /  HISTORY ↑` : status
   return [`${viewStatus}`, '', ...lines].join('\n')
 }
@@ -1559,9 +1570,7 @@ function readableReplyLine(line: string): string {
 }
 
 function formatTerminal(): string {
-  const all = terminalText.split('\n')
-  const end = Math.max(0, all.length - terminalOffset)
-  const lines = all.slice(Math.max(0, end - visibleTerminalLines()), end)
+  const lines = pageFromEnd(terminalText.split('\n'), terminalOffset, visibleTerminalLines())
   const viewStatus = terminalOffset ? `${status}  /  HISTORY ↑` : status
   return [`${viewStatus}`, '', ...lines].join('\n')
 }
@@ -1582,28 +1591,6 @@ function maxChatHistory(): number {
   if (settings.verbosity === 'concise') return 60
   if (settings.verbosity === 'verbose') return MAX_HISTORY
   return 140
-}
-
-function wrapLine(text: string, width: number): string[] {
-  const words = text.split(/\s+/)
-  const output: string[] = []
-  let line = ''
-  for (const word of words) {
-    if (word.length > width) {
-      if (line) output.push(line)
-      for (let offset = 0; offset < word.length; offset += width) output.push(word.slice(offset, offset + width))
-      line = ''
-      continue
-    }
-    const next = line ? `${line} ${word}` : word
-    if (next.length <= width) line = next
-    else {
-      if (line) output.push(line)
-      line = word
-    }
-  }
-  if (line) output.push(line)
-  return output
 }
 
 function toggleRecording(): void {
@@ -1721,6 +1708,15 @@ async function postSessionInput(device: Device, sessionID: string, text: string)
   })
 }
 
+function cancelReview(): void {
+  const returnScreen: Screen = terminalInput ? 'terminal' : 'chat'
+  screen = returnScreen
+  promptText = ''
+  status = 'LIVE  ·  TAP TO TALK'
+  updatePhoneUI(true)
+  void redraw()
+}
+
 async function activateRow(row: Row): Promise<void> {
   if (row.action === 'page-next') {
     listPage += 1
@@ -1744,12 +1740,11 @@ async function activateRow(row: Row): Promise<void> {
   if (row.action === 'history-older') {
     if (screen !== 'more') return
     if (moreReturnScreen === 'chat' && activeSession?.agent !== 'terminal') {
-      const maximum = Math.max(0, agentReplyLineCount() - visibleChatLines())
-      chatOffset = Math.min(maximum, chatOffset + visibleChatLines())
+      chatOffset = Math.min(maxScrollOffset(agentChatLineCount(), visibleChatLines()), chatOffset + visibleChatLines())
       chatAutoFollowing = false
     }
-    else if (moreReturnScreen === 'chat') chatOffset = Math.min(chatHistory.length * 4, chatOffset + 4)
-    else if (moreReturnScreen === 'terminal') terminalOffset = Math.min(80, terminalOffset + 4)
+    else if (moreReturnScreen === 'chat') chatOffset = Math.min(maxScrollOffset(chatHistory.length, visibleChatLines()), chatOffset + visibleChatLines())
+    else if (moreReturnScreen === 'terminal') terminalOffset = Math.min(maxScrollOffset(terminalText.split('\n').length, visibleTerminalLines()), terminalOffset + visibleTerminalLines())
     screen = moreReturnScreen
     await redraw()
     return
@@ -1874,10 +1869,7 @@ async function activateRow(row: Row): Promise<void> {
     return
   }
   if (row.action === 'cancel') {
-    screen = terminalInput ? 'terminal' : 'chat'
-    promptText = ''
-    status = 'LIVE  ·  TAP TO TALK'
-    await redraw()
+    cancelReview()
     return
   }
 }
@@ -2051,7 +2043,7 @@ function viewForScreen(): HudView | undefined {
         loading: sessionLoading,
         loadingFrame,
         statusFrame,
-        status,
+        status: liveHistoryStatus(),
         footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
     }
@@ -2067,7 +2059,7 @@ function sessionHarness(session: SessionInfo): string {
 }
 
 function sortSessions(items: SessionInfo[]): SessionInfo[] {
-  return [...items].sort((a, b) => (b.updatedAt ?? 0) - (a.updatedAt ?? 0))
+  return interleaveSessions(items, SESSION_AGENT_PRIORITY)
 }
 
 function relativeActivity(value?: number): string {

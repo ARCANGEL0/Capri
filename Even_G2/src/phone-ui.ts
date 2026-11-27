@@ -1,5 +1,6 @@
 import capriShieldBadge from '../icons/custom/CapriShieldBadge.png?url'
 import { EMPTY_STT, STT_PROVIDERS, type SttSettings } from './stt'
+import { draftTextForSubmit, isReviewingDraft } from './phone-draft'
 
 export type PhoneTab = 'devices' | 'sessions' | 'terminal' | 'setup' | 'settings'
 
@@ -99,6 +100,7 @@ export type PhoneActions = {
   resumeSession: (device: string, session: PhoneSession, runtime: string) => void
   startTerminal: (device: string) => void
   sendInput: (device: string, text: string, terminal: boolean) => void
+  cancelReview: () => void
   sendTerminalKey: (device: string, key: string) => void
   disconnect: () => void
   changeModel: (device: string, model: string) => void
@@ -324,6 +326,13 @@ export class PhoneUI {
       case 'send':
         this.submitDraft()
         break
+      case 'cancel':
+        if (this.snapshot && isReviewingDraft(this.snapshot.status)) {
+          this.currentDraft = this.snapshot.draftText
+          this.actions.cancelReview()
+          this.render()
+        }
+        break
       case 'terminal-key':
         this.actions.sendTerminalKey(device, value)
         break
@@ -547,8 +556,10 @@ export class PhoneUI {
   }
 
   private submitDraft(): void {
-    const text = this.currentDraft.trimEnd()
-    if (!text || !this.snapshot) return
+    if (!this.snapshot) return
+    const status = this.snapshot.status ?? ''
+    const text = draftTextForSubmit(status, this.snapshot.draftText ?? '', this.currentDraft)
+    if (!text) return
     const active = this.snapshot.activeSession
     if (active?.agent === 'terminal') {
       const key = this.deviceName
