@@ -9,7 +9,7 @@
 import type { CapriRuntime } from '../../even'
 import type { IconName } from './art'
 import { Pixels, loadHudAssets, loadHudFont, tileKey, tilePng } from './canvas'
-import { BOX_LAYOUT as FRAME_LAYOUT, FULL_LAYOUT, LIST_LAYOUT, SPLASH_LAYOUT, SPLASH_MARK, type Layout } from './layouts'
+import { BOX_LAYOUT as FRAME_LAYOUT, FULL_LAYOUT, LIVE_LAYOUT, LIST_LAYOUT, SPLASH_LAYOUT, SPLASH_MARK, type Layout } from './layouts'
 import {
   drawActions,
   drawApproval,
@@ -20,6 +20,7 @@ import {
   drawSplash,
   type TextSlot,
 } from './pages'
+import { liveTexts } from '../../hud-text'
 
 export interface BoxView {
   kind: 'box'
@@ -31,7 +32,7 @@ export interface BoxView {
   rowIcons?: Array<IconName | null>
 }
 
-export type HudView =
+export type HudView = (
   | { kind: 'devices'; data: { title: string; page: { index: number; count: number }; rows: Array<{ name: string; ip: string; online: boolean; available: boolean; ssh?: string }>; selected: number; footer: { left: string; right?: string } } }
   | { kind: 'actions'; data: { title: string; page: { index: number; count: number }; rows: Array<{ label: string; hint?: string }>; selected: number; footer: { left: string; right?: string } } }
   | { kind: 'list'; data: { title: string; page: { index: number; count: number }; rows: Array<{ label: string; value?: string; meta?: string; activity?: string; approval?: boolean }>; selected: number; footer: { left: string; right?: string } } }
@@ -39,9 +40,11 @@ export type HudView =
   | { kind: 'approval'; data: { title: string; page: { index: number; count: number }; prompt: string; options: Array<{ label: string }>; selected: number; footer: { left: string; right?: string } } }
   | BoxView
   | { kind: 'splash'; progress: number; text: string }
+) & { ack?: boolean }
 
 function layoutFor(view: HudView): Layout {
   if (view.kind === 'box') return FRAME_LAYOUT
+  if (view.kind === 'live') return LIVE_LAYOUT
   if (view.kind === 'list') return LIST_LAYOUT
   if (view.kind === 'splash') return SPLASH_LAYOUT
   return FULL_LAYOUT
@@ -66,8 +69,9 @@ function draw(view: HudView): Pixels {
 const SLOTS: TextSlot[] = ['count', 'body', 'hint']
 
 function textsFor(view: HudView): Record<TextSlot, string> {
+  if (view.kind === 'live') return liveTexts(view.data, view.ack)
   if (view.kind === 'box') return { count: view.count || ' ', body: view.body || ' ', hint: view.hint || ' ' }
-  if (view.kind === 'list') return { count: ' ', body: listBodyText(view.data), hint: ' ' }
+  if (view.kind === 'list') return { count: ' ', body: `${view.ack ? '› ' : ''}${listBodyText(view.data)}`, hint: ' ' }
   if (view.kind === 'splash') return { count: ' ', body: view.text || ' ', hint: ' ' }
   return { count: ' ', body: ' ', hint: ' ' }
 }
@@ -134,9 +138,10 @@ export class Hud {
   }
 
   private async flush(view: HudView): Promise<void> {
-    const pixels = draw(view)
-    const texts = textsFor(view)
     const layout = layoutFor(view)
+    // Text-only layouts skip canvas drawing/quantisation entirely.
+    const pixels = layout.images.length ? draw(view) : new Pixels()
+    const texts = textsFor(view)
     const slots = SLOTS.filter(slot => layout.texts[slot])
 
     if (this.runtime.layout() !== layout) {

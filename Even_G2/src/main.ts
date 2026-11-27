@@ -10,7 +10,8 @@ import { TerminalScreen } from './terminal-screen'
 import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
 import { maxScrollOffset, pageFromEnd, wrapLine } from './chat-view'
-import { interleaveSessions, SESSION_AGENT_PRIORITY } from './session-order'
+import { ACK_PULSE_MS, interactionActive, swipePageDelta } from './gesture'
+import { sortSessionsByLastUsed } from './session-order'
 import { Hud, type HudView } from './glasses/hud/display'
 import { SPLASH_LAYOUT } from './glasses/hud/layouts'
 import {
@@ -314,6 +315,9 @@ let sessionLoading = false
 let loadingFrame = 0
 let statusFrame = 0
 let statusTimer: number | undefined
+let lastInteractionAt = 0
+let ackUntil = 0
+let renderGeneration = 0
 let loadingTimer: number | undefined
 let sttStatus = ''
 let sttTesting = false
@@ -363,13 +367,34 @@ function setSessionLoading(next: boolean): void {
   }, 260)
 }
 
+function cancelPendingRender(): void {
+  if (renderTimer !== undefined) {
+    window.clearTimeout(renderTimer)
+    renderTimer = undefined
+  }
+}
+
+function noteInteraction(): void {
+  const now = Date.now()
+  lastInteractionAt = now
+  ackUntil = now + ACK_PULSE_MS
+  renderGeneration += 1
+  // A queued status tick must never overwrite the state the gesture just set.
+  cancelPendingRender()
+}
+
+function withAck(view: HudView): HudView {
+  return Date.now() < ackUntil ? { ...view, ack: true } : view
+}
+
 function startStatusScroll(): void {
   if (statusTimer !== undefined) return
   statusTimer = window.setInterval(() => {
     if (screen !== 'chat' && screen !== 'terminal') return
+    if (renderInFlight || interactionActive(Date.now(), lastInteractionAt)) return
     statusFrame = (statusFrame + 1) % 65536
     renderLive(true)
-  }, 180)
+  }, 260)
 }
 
 function markSessionAttached(): void {
@@ -520,36 +545,39 @@ async function boot(): Promise<void> {
 
   runtime.onSwipe((dir: 'up' | 'down') => {
     if (screen === 'error') return
+    noteInteraction()
     if (screen === 'chat' || screen === 'terminal') {
+      const isAgentChat = screen === 'chat' && activeSession?.agent !== 'terminal'
+      const step = swipePageDelta(isAgentChat || screen === 'chat' ? visibleChatLines() : visibleTerminalLines())
       if (dir === 'down') {
-        if (screen === 'chat' && activeSession?.agent !== 'terminal') {
-          chatOffset = Math.max(0, chatOffset - visibleChatLines())
+        if (isAgentChat) {
+          chatOffset = Math.max(0, chatOffset - step)
           if (chatOffset === 0) chatAutoFollowing = true
-        } else if (screen === 'chat') chatOffset = Math.max(0, chatOffset - visibleChatLines())
-        else terminalOffset = Math.max(0, terminalOffset - visibleTerminalLines())
-        void redraw(false)
-      } else {
-        if (screen === 'chat' && activeSession?.agent !== 'terminal') {
-          chatOffset = Math.min(maxScrollOffset(agentChatLineCount(), visibleChatLines()), chatOffset + visibleChatLines())
-          chatAutoFollowing = false
         } else if (screen === 'chat') {
-          chatOffset = Math.min(maxScrollOffset(chatHistory.length, visibleChatLines()), chatOffset + visibleChatLines())
+          chatOffset = Math.max(0, chatOffset - step)
         } else {
-          terminalOffset = Math.min(maxScrollOffset(terminalText.split('\n').length, visibleTerminalLines()), terminalOffset + visibleTerminalLines())
+          terminalOffset = Math.max(0, terminalOffset - step)
         }
-        void redraw(false)
+      } else if (isAgentChat) {
+        chatOffset = Math.min(maxScrollOffset(agentChatLineCount(), visibleChatLines()), chatOffset + step)
+        chatAutoFollowing = false
+      } else if (screen === 'chat') {
+        chatOffset = Math.min(maxScrollOffset(chatHistory.length, visibleChatLines()), chatOffset + step)
+      } else {
+        terminalOffset = Math.min(maxScrollOffset(terminalText.split('\n').length, visibleTerminalLines()), terminalOffset + step)
       }
+      void redraw(false)
       return
     }
     const rowsPage = visibleRows()
-    const next = dir === 'down' ? Math.min(selectedRow + 1, rowsPage.length - 1) : Math.max(selectedRow - 1, 0)
+    const next = Math.max(0, Math.min(selectedRow + (dir === 'down' ? 2 : -2), rowsPage.length - 1))
     if (next !== selectedRow) {
       selectedRow = next
       void redraw(false)
     }
   })
 
-  runtime.onTap(() => {})
+  runtime.onTap(() => noteInteraction())
 
   runtime.onDoubleTap(() => goBack())
 
@@ -596,8 +624,9 @@ function handleEvent(event: EvenHubEvent): void {
   if (sys) {
     const type = sys.eventType ?? 0
     if (type === 7 || type === 10) { cleanup(); return }
-    if (type === 3) { goBack(); return }
+    if (type === 3) { noteInteraction(); goBack(); return }
     if (type === 0 && !event.listEvent) {
+      noteInteraction()
       if (screen === 'error') { goBack(); return }
       if (screen === 'chat' || screen === 'terminal') {
         toggleRecording()
@@ -619,10 +648,12 @@ function handleEvent(event: EvenHubEvent): void {
     ? listEvent.currentSelectItemIndex
     : namedIndex
   if (index >= 0 && index < pageRows.length && index !== selectedRow) {
+    noteInteraction()
     selectedRow = index
     if (screen === 'review' || screen === 'approval') void redraw()
   }
   if ((listEvent.eventType ?? 0) === 0) {
+    noteInteraction()
     const row = pageRows[index]
     if (row) {
       void activateRow(row)
@@ -1472,20 +1503,28 @@ function appendTerminal(current: string, text: string): string {
   return value
 }
 
-function renderLive(skipPhoneUpdate = false): void {
+function renderLive(skipPhoneUpdate = false, immediate = false): void {
   const activeHud = hud
   if (!activeRuntime || !activeHud || (screen !== 'chat' && screen !== 'terminal')) {
     if (!skipPhoneUpdate) updatePhoneUI()
     return
   }
+  const generation = renderGeneration
+  if (immediate) {
+    cancelPendingRender()
+    void flushLiveRender(activeHud, skipPhoneUpdate, generation)
+    return
+  }
   if (renderTimer !== undefined) return
   renderTimer = window.setTimeout(() => {
     renderTimer = undefined
-    void flushLiveRender(activeHud, skipPhoneUpdate)
-  }, 120)
+    if (generation !== renderGeneration) return
+    void flushLiveRender(activeHud, skipPhoneUpdate, generation)
+  }, 60)
 }
 
-async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise<void> {
+async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false, generation = renderGeneration): Promise<void> {
+  if (generation !== renderGeneration) return
   if (!skipPhoneUpdate) updatePhoneUI()
   if (renderInFlight) {
     renderDirty = true
@@ -1493,13 +1532,14 @@ async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise
   }
   renderInFlight = true
   try {
+    if (generation !== renderGeneration) return
     const heading = screenTitle()
     const content = screen === 'chat' ? formatChat() : formatTerminal()
     const bodyText = screen === 'chat' && activeSession?.agent !== 'terminal' ? content : pxTruncate(content, 552)
-    const view: HudView = {
+    const view: HudView = withAck({
       kind: 'live',
       data: {
-      title: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'CAPRI' : `CAPRI  //  ${heading}`,
+        title: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'CAPRI' : `CAPRI  //  ${heading}`,
         page: { index: 0, count: 1 },
         lines: bodyText.split('\n'),
         active: true,
@@ -1509,7 +1549,7 @@ async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise
         status: liveHistoryStatus(),
         footer: { left: screen === 'chat' && activeSession?.agent !== 'terminal' ? 'LIVE  ·  TAP TO TALK' : status },
       },
-    }
+    })
     await activeHud.show(view)
     if (!activeHud) {
       status = 'Lens display update failed'
@@ -1520,7 +1560,7 @@ async function flushLiveRender(activeHud: Hud, skipPhoneUpdate = false): Promise
     renderInFlight = false
     if (renderDirty) {
       renderDirty = false
-      renderLive()
+      void flushLiveRender(activeHud, true, renderGeneration)
     }
   }
 }
@@ -1927,12 +1967,13 @@ function goBack(): void {
 
 async function redraw(updatePhone = true): Promise<void> {
   if (updatePhone) updatePhoneUI()
+  cancelPendingRender()
   const activeHud = hud
   if (!activeHud) return
 
   const view = viewForScreen()
   if (!view) return
-  await activeHud.show(view)
+  await activeHud.show(withAck(view))
 }
 
 function viewForScreen(): HudView | undefined {
@@ -2059,7 +2100,7 @@ function sessionHarness(session: SessionInfo): string {
 }
 
 function sortSessions(items: SessionInfo[]): SessionInfo[] {
-  return interleaveSessions(items, SESSION_AGENT_PRIORITY)
+  return sortSessionsByLastUsed(items)
 }
 
 function relativeActivity(value?: number): string {

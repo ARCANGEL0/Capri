@@ -16,6 +16,8 @@ try {
       'src/chat-view.ts',
       'src/session-order.ts',
       'src/phone-draft.ts',
+      'src/gesture.ts',
+      'src/hud-text.ts',
     ],
     outdir: dir,
     format: 'esm',
@@ -27,8 +29,10 @@ try {
   const { AgentOutput } = await import(pathToFileURL(join(dir, 'agent-output.js')).href)
   const { presentAgentScreen } = await import(pathToFileURL(join(dir, 'agent-presentation.js')).href)
   const { maxScrollOffset, pageFromEnd } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
-  const { interleaveSessions, SESSION_AGENT_PRIORITY } = await import(pathToFileURL(join(dir, 'session-order.js')).href)
+  const { sortSessionsByLastUsed, updatedAtMs } = await import(pathToFileURL(join(dir, 'session-order.js')).href)
   const { draftTextForSubmit } = await import(pathToFileURL(join(dir, 'phone-draft.js')).href)
+  const { interactionActive, shouldDeliverSwipe, swipePageDelta } = await import(pathToFileURL(join(dir, 'gesture.js')).href)
+  const { liveTexts } = await import(pathToFileURL(join(dir, 'hud-text.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
   const redraw = new AgentOutput()
@@ -79,17 +83,40 @@ try {
   assert.deepEqual(pageFromEnd(transcriptLines, 14, 7), transcriptLines.slice(19, 26))
   assert.deepEqual(pageFromEnd(transcriptLines, 999, 7), transcriptLines.slice(0, 7))
 
-  // Saved sessions must stay discoverable across harnesses on short pages.
-  const recentSessions = [
-    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'claude', id: `c${index}`, updatedAt: 2000 - index })),
-    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'opencode', id: `o${index}`, updatedAt: 1000 - index })),
-    ...Array.from({ length: 20 }, (_, index) => ({ agent: 'codex', id: `x${index}`, updatedAt: 900 - index })),
+  // Session pages are strict last-used: harness identity never outranks recency.
+  const now = Date.now()
+  const sessions = [
+    { agent: 'opencode', id: 'stale-opencode', updatedAt: (now - 30 * 86_400_000) / 1000 },
+    { agent: 'claude', id: 'fresh-claude', updatedAt: now - 60_000 },
+    { agent: 'codex', id: 'middle-codex', updatedAt: now - 3_600_000 },
+    { agent: 'nclaude', id: 'missing-time' },
   ]
-  const ordered = interleaveSessions(recentSessions, SESSION_AGENT_PRIORITY)
-  assert.equal(ordered.length, recentSessions.length)
-  assert.deepEqual(ordered.slice(0, 3).map((session) => session.agent), ['opencode', 'claude', 'codex'])
-  assert.equal(ordered[0].id, 'o0')
-  assert.equal(ordered[3].id, 'o1')
+  assert.equal(updatedAtMs(1_700_000_000), 1_700_000_000_000)
+  assert.deepEqual(
+    sortSessionsByLastUsed(sessions).map((session) => session.id),
+    ['fresh-claude', 'middle-codex', 'stale-opencode', 'missing-time'],
+  )
+
+  // Rapid swipes must reach the app; only an exact echo is suppressed.
+  const first = { type: 1, source: 'glasses', at: 1000 }
+  assert.equal(shouldDeliverSwipe(first, 1, 'glasses', 1005), false)
+  assert.equal(shouldDeliverSwipe(first, 2, 'glasses', 1005), true)
+  assert.equal(shouldDeliverSwipe(first, 1, 'ring', 1005), true)
+  assert.equal(shouldDeliverSwipe(first, 1, 'glasses', 1030), true)
+  assert.equal(swipePageDelta(7), 14)
+  assert.equal(interactionActive(1200, 1000), true)
+  assert.equal(interactionActive(3000, 1000), false)
+
+  // Gesture acknowledgement is a cheap text write, no canvas/tile repaint.
+  const ackText = liveTexts({
+    title: 'CAPRI',
+    lines: ['AGENT> ready'],
+    active: true,
+    status: 'LIVE',
+    footer: { left: 'LIVE  ·  TAP TO TALK' },
+  }, true)
+  assert.equal(ackText.hint, '› LIVE  ·  TAP TO TALK')
+  assert.equal(ackText.body, 'AGENT> ready')
 
   // The transcript Send button and the typed composer take different sources.
   assert.equal(draftTextForSubmit('TRANSCRIPT READY  ·  SEND OR CANCEL', 'ship it', ''), 'ship it')

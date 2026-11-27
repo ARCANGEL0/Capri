@@ -20,13 +20,27 @@ export interface LineBox {
 }
 
 export interface Layout {
-  key: 'full' | 'list' | 'box' | 'splash'
+  key: 'full' | 'live' | 'list' | 'box' | 'splash'
   images: readonly Tile[]
   texts: Partial<Record<TextSlot, TextBox>>
   lines: readonly LineBox[]
 }
 
 export const FULL_LAYOUT: Layout = { key: 'full', images: TILES, texts: {}, lines: [] }
+
+// Chat/terminal is text-only on purpose. Swiping rewrites one firmware text
+// container instead of uploading four image tiles over BLE, which is what made
+// gestures feel a page behind.
+export const LIVE_LAYOUT: Layout = {
+  key: 'live',
+  images: [],
+  texts: {
+    count: { id: 11, name: 'live-status', x: 8, y: 4, width: 560, height: 30, color: 4 },
+    body: { id: 12, name: 'live-body', x: 8, y: 42, width: 560, height: 174, color: 4 },
+    hint: { id: 13, name: 'live-footer', x: 8, y: 232, width: 560, height: 34, color: 2 },
+  },
+  lines: [{ id: 14, name: 'live-rule', x: 8, y: 222, width: 560, height: 2, color: 9 }],
+}
 
 // Lists keep their bevels and column labels in the raster tiles, while the
 // changing rows live in a firmware text container. Selection swipes then

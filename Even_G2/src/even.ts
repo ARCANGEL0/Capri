@@ -23,9 +23,9 @@ import {
 import { SCREEN_H, SCREEN_W, type Tile } from './glasses/hud/canvas'
 import type { TextBox, TextSlot } from './glasses/hud/pages'
 import type { Layout, LineBox } from './glasses/hud/layouts'
+import { shouldDeliverSwipe, type InputSource, type LastSwipe, type SwipeDirection } from './gesture'
 
-export type SwipeDirection = 'up' | 'down'
-export type InputSource = 'glasses' | 'ring' | 'unknown'
+export type { InputSource, SwipeDirection } from './gesture'
 export type LaunchSourceKind = 'app-menu' | 'glasses-menu' | 'unknown'
 
 export interface DeviceStatus {
@@ -56,7 +56,6 @@ export interface CapriRuntime {
 }
 
 const CALL_TIMEOUT_MS = 5000
-const SWIPE_GATE_MS = 120
 
 function withTimeout<T>(promise: Promise<T>, timeoutMs: number, what: string): Promise<T> {
   return new Promise((resolve, reject) => {
@@ -186,7 +185,7 @@ export function connectCapriRuntime(
   let deviceStatusHandler: ((status: DeviceStatus) => void) | null = null
   let launchSourceHandler: ((kind: LaunchSourceKind) => void) | null = null
   let menuHandler: ((itemID: number) => void) | null = null
-  let lastSwipe = 0
+  let lastSwipe: LastSwipe | undefined
 
   bridge.onDeviceStatusChanged(status => {
     deviceStatusHandler?.({
@@ -218,10 +217,13 @@ export function connectCapriRuntime(
 
     if (is(3)) return doubleTapHandler?.(source) // DOUBLE_CLICK_EVENT
     if (is(1) || is(2)) {
+      const type: 1 | 2 = is(1) ? 1 : 2
       const now = Date.now()
-      if (now - lastSwipe < SWIPE_GATE_MS) return
-      lastSwipe = now
-      return swipeHandler?.(is(1) ? 'up' : 'down', source) // SCROLL_TOP / SCROLL_BOTTOM
+      // Only exact same-direction echoes are ignored. Rapid alternating or
+      // repeated swipes all reach the app; repaint coalescing handles them.
+      if (!shouldDeliverSwipe(lastSwipe, type, source, now)) return
+      lastSwipe = { type, source, at: now }
+      return swipeHandler?.(type === 1 ? 'up' : 'down', source) // SCROLL_TOP / SCROLL_BOTTOM
     }
     if (sys === 4 || sys === 5) return foregroundHandler?.() // FOREGROUND_ENTER / EXIT
     if (sys === 9 || sys === 10) return // LONG_PRESS / LONG_PRESS_RELEASE
