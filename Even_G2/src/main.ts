@@ -9,8 +9,9 @@ import { AgentOutput } from './agent-output'
 import { TerminalScreen } from './terminal-screen'
 import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
-import { maxScrollOffset, pageFromEnd, wrapLine } from './chat-view'
-import { ACK_PULSE_MS, interactionActive, swipePageDelta } from './gesture'
+import { maxScrollOffset, pageFromEnd, transcriptLines, wrapLine } from './chat-view'
+import { maxReviewOffset, reviewBody } from './review-text'
+import { ACK_PULSE_MS, interactionActive, moveSelection, swipePageDelta } from './gesture'
 import { sortSessionsByLastUsed } from './session-order'
 import { Hud, type HudView } from './glasses/hud/display'
 import { SPLASH_LAYOUT } from './glasses/hud/layouts'
@@ -256,6 +257,36 @@ function setAgentTranscript(value: string): void {
   agentOutput.feed(value)
 }
 
+// Saved sessions live in the harness (SQLite/JSONL), not in this app's local
+// storage. Pull every turn so resuming shows the whole conversation and the
+// user can keep scrolling back through it.
+async function loadSessionHistory(device: Device, agent: string, sessionID: string): Promise<boolean> {
+  if (!sessionID || agent === 'terminal') return false
+  try {
+    const data = await requestJson(device, `/api/v1/sessions/${encodeURIComponent(sessionID)}/history?agent=${encodeURIComponent(agent)}`, {
+      timeoutMs: 12000,
+    }) as { history?: Array<{ role?: string; text?: string }> }
+    const lines: string[] = []
+    for (const turn of Array.isArray(data.history) ? data.history : []) {
+      const text = typeof turn.text === 'string' ? turn.text.trim() : ''
+      if (text) lines.push(`${turn.role === 'user' ? 'YOU>' : 'AGENT>'} ${text}`)
+    }
+    if (!lines.length) return false
+    loadedHistoryLines = lines
+    // The resumed PTY starts fresh; a stale local transcript would duplicate it.
+    agentScreenHistory = []
+    lastAgentScreen = ''
+    agentTranscript = ''
+    agentOutput = new AgentOutput()
+    agentTerminal.reset()
+    chatOffset = 0
+    chatAutoFollowing = true
+    return true
+  } catch {
+    return false
+  }
+}
+
 function savedApprovalIds(): string[] {
   try {
     const value = JSON.parse(localStorage.getItem(APPROVAL_SESSIONS_KEY) ?? '[]')
@@ -297,6 +328,7 @@ let agentTerminal = new TerminalScreen()
 let agentTranscript = ''
 let agentOutput = new AgentOutput()
 let agentScreenHistory: string[] = []
+let loadedHistoryLines: string[] = []
 let lastAgentScreen = ''
 let screenHistoryTimer: number | undefined
 let modelMode: 'new' | 'change' | 'view' = 'view'
@@ -311,6 +343,7 @@ let errorReturnScreen: Screen = 'devices'
 let chatOffset = 0
 let chatAutoFollowing = true
 let terminalOffset = 0
+let reviewOffset = 0
 let sessionLoading = false
 let loadingFrame = 0
 let statusFrame = 0
@@ -569,8 +602,18 @@ async function boot(): Promise<void> {
       void redraw(false)
       return
     }
+    if (screen === 'review') {
+      const options = visibleRows()
+      const step = swipePageDelta(1)
+      reviewOffset = Math.max(0, Math.min(
+        reviewOffset + (dir === 'up' ? step : -step),
+        maxReviewOffset(promptText, options.length),
+      ))
+      void redraw(false)
+      return
+    }
     const rowsPage = visibleRows()
-    const next = Math.max(0, Math.min(selectedRow + (dir === 'down' ? 2 : -2), rowsPage.length - 1))
+    const next = moveSelection(selectedRow, dir, rowsPage.length)
     if (next !== selectedRow) {
       selectedRow = next
       void redraw(false)
@@ -623,7 +666,8 @@ function handleEvent(event: EvenHubEvent): void {
   const sys = event.sysEvent
   if (sys) {
     const type = sys.eventType ?? 0
-    if (type === 7 || type === 10) { cleanup(); return }
+    if (type === 7) { cleanup(); return }
+    if (type === 9 || type === 10) return // long press begins/releases
     if (type === 3) { noteInteraction(); goBack(); return }
     if (type === 0 && !event.listEvent) {
       noteInteraction()
@@ -1134,15 +1178,19 @@ async function showRuntimes(session: SessionInfo): Promise<void> {
 
 async function startSession(agent: string, model: string, resumeID = '', runtime = agent, forceResume = false, conflictRetried = false): Promise<void> {
   if (!activeDevice) return
+  loadedHistoryLines = []
   pendingResumeSession = undefined
   if (resumeID && !activeSession && !forceResume) {
     const savedRuntime = readRuntimeSession(activeDevice.name, resumeID)
     if (savedRuntime) {
       activeSession = { id: savedRuntime, agent, title: sessions.find((item) => item.id === resumeID)?.title ?? agentLabel(agent), runtime }
       activeSavedSessionId = resumeID
-      setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
+      if (!(await loadSessionHistory(activeDevice, agent, resumeID))) {
+        setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
+      }
       agentTerminal.reset()
-      setSessionLoading(!agentTranscript)
+      chatHistory = [{ kind: 'sys', text: `${agentLabel(agent)}  /  ${activeDevice.name}`, timestamp: Date.now() }]
+      setSessionLoading(!agentTranscript && !loadedHistoryLines.length)
       activeSessionDevice = activeDevice
       activeAgent = agents.find((item) => item.id === agent) ?? { id: agent, name: agentLabel(agent), available: true }
       screen = 'chat'
@@ -1229,7 +1277,9 @@ async function startSession(agent: string, model: string, resumeID = '', runtime
     activeAgent = { ...activeAgent, id: agent }
     activeModel = model
     agentTerminal.reset()
-    setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
+    if (!(resumeID && await loadSessionHistory(activeDevice, agent, resumeID))) {
+      setAgentTranscript(readChatTranscript(activeDevice.name, resumeID))
+    }
     markSessionAttached()
     stopAgentScreenHistory()
     agentScreenHistory = []
@@ -1569,15 +1619,15 @@ function formatAgentResponse(): string {
   return presentAgentScreen(agentOutput.text() || agentTerminal.text()).response
 }
 
-function agentReplyText(): string {
-  if (agentTranscript) return formatAgentResponse()
-  return [...agentScreenHistory, formatAgentResponse()].filter(Boolean).join('\n\n')
-}
-
 function agentChatTranscript(): string {
-  const reply = agentReplyText().split('\n').map(readableReplyLine).join('\n')
-  const userLines = chatHistory.filter((line) => line.kind === 'in').map((line) => `YOU> ${line.text}`).join('\n')
-  return [userLines, reply ? `AGENT> ${reply}` : ''].filter(Boolean).join('\n\n')
+  const users = chatHistory.filter((line) => line.kind === 'in').map((line) => line.text)
+  const replies = [...agentScreenHistory]
+  const current = formatAgentResponse()
+  if (current) replies.push(current)
+  const live = transcriptLines(users, replies.map((reply) => reply.split('\n').map(readableReplyLine).join('\n')))
+  // Server history comes first, then anything said in this session, so the
+  // newest turn is always the last line on the lens.
+  return [...loadedHistoryLines, ...live].join('\n')
 }
 
 function agentChatLineCount(): number {
@@ -1698,6 +1748,7 @@ async function stopRecording(): Promise<void> {
     if (!promptText) throw new Error('Speech was not recognized')
     terminalInput = screen === 'terminal'
     screen = 'review'
+    reviewOffset = 0
     rows = [
       { label: '> Send', action: 'send' },
       { label: '  Cancel', action: 'cancel' },
@@ -1751,6 +1802,7 @@ async function postSessionInput(device: Device, sessionID: string, text: string)
 function cancelReview(): void {
   const returnScreen: Screen = terminalInput ? 'terminal' : 'chat'
   screen = returnScreen
+  reviewOffset = 0
   promptText = ''
   status = 'LIVE  ·  TAP TO TALK'
   updatePhoneUI(true)
@@ -1938,6 +1990,7 @@ function goBack(): void {
     void redraw()
   } else if (screen === 'review') {
     screen = terminalInput ? 'terminal' : 'chat'
+    reviewOffset = 0
     promptText = ''
     status = 'LIVE  ·  TAP TO TALK'
     void redraw()
@@ -2035,15 +2088,16 @@ function viewForScreen(): HudView | undefined {
     }
   }
   if (screen === 'review') {
+    const options = visibleRows().map((row) => ({ label: row.label }))
     return {
-      kind: 'approval',
+      kind: 'live',
       data: {
         title,
         page: { index: 0, count: 1 },
-        prompt: promptText || 'No transcript was captured.',
-        options: visibleRows().map((row) => ({ label: row.label })),
-        selected: selectedRow,
-        footer: { left: status },
+        lines: reviewBody(promptText, options, selectedRow, reviewOffset),
+        active: true,
+        status,
+        footer: { left: 'SWIPE SCROLL  ·  TAP SEND  ·  2× CANCEL' },
       },
     }
   }

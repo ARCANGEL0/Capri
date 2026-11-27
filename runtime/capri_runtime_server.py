@@ -530,6 +530,148 @@ def opencode_sessions():
     return session_slice(sorted(found, key=lambda item: item.get("updatedAt", 0), reverse=True))
 
 
+def clean_history_text(text):
+    """Drop harness reminders/tool scaffolding so the lens shows real dialogue."""
+    value = str(text or "").replace("\r\n", "\n").strip()
+    if not value:
+        return ""
+    if value.startswith("<") or value.startswith("# AGENTS.md instructions"):
+        return ""
+    if value.startswith("Caveat:") and "local commands" in value[:160]:
+        return ""
+    return value
+
+
+def history_turn(role, text):
+    value = clean_history_text(text)
+    if role in ("user", "assistant") and value:
+        return {"role": role, "text": value[:8000]}
+    return None
+
+
+def opencode_history(session_id):
+    database = Path(os.environ.get("OPENCODE_DB", str(HOME / ".local" / "share" / "opencode" / "opencode.db")))
+    if not database.exists() or not re.fullmatch(r"[A-Za-z0-9_.-]+", session_id):
+        return []
+    try:
+        connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True, timeout=2)
+        rows = connection.execute(
+            "select m.id, m.data, p.data from message m "
+            "left join part p on p.message_id = m.id "
+            "where m.session_id = ? order by m.time_created asc, p.time_created asc",
+            (session_id,),
+        ).fetchall()
+        connection.close()
+    except (OSError, sqlite3.Error):
+        return []
+    turns = []
+    current_id, current_role, current_parts = None, "", []
+    for message_id, message_data, part_data in rows:
+        if not message_id:
+            continue
+        if current_id is not None and message_id != current_id:
+            turn = history_turn(current_role, "\n".join(current_parts))
+            if turn:
+                turns.append(turn)
+            current_parts = []
+        if current_id != message_id:
+            try:
+                current_role = str(json.loads(message_data).get("role") or "")
+            except (json.JSONDecodeError, TypeError, AttributeError):
+                current_role = ""
+            current_id = message_id
+        if part_data:
+            try:
+                part = json.loads(part_data)
+            except (json.JSONDecodeError, TypeError):
+                part = {}
+            # Reasoning parts are internal; only text parts belong on the lens.
+            if isinstance(part, dict) and part.get("type") == "text" and isinstance(part.get("text"), str):
+                current_parts.append(part["text"])
+    turn = history_turn(current_role, "\n".join(current_parts))
+    if turn:
+        turns.append(turn)
+    return turns[-400:]
+
+
+def claude_history(session_id):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session_id):
+        return []
+    path = None
+    for root in claude_session_roots():
+        try:
+            matches = list(root.rglob(f"{session_id}.jsonl"))
+        except OSError:
+            matches = []
+        if matches:
+            path = matches[0]
+            break
+    if path is None:
+        return []
+    turns = []
+    for record in read_json_lines(path, 2_000_000):
+        role = str(record.get("type") or "")
+        if role not in ("user", "assistant"):
+            continue
+        message = record.get("message") or {}
+        if not isinstance(message, dict):
+            continue
+        turn = history_turn(role, message_text(message.get("content")))
+        if turn:
+            turns.append(turn)
+    return turns[-400:]
+
+
+def codex_history(session_id):
+    if not re.fullmatch(r"[A-Za-z0-9_.-]+", session_id):
+        return []
+    root = Path(os.environ.get("CODEX_HOME", str(HOME / ".codex"))) / "sessions"
+    try:
+        paths = list(root.rglob("rollout-*.jsonl"))
+    except OSError:
+        return []
+    # Codex rollout filenames carry the session UUID; use that before scanning
+    # every file so resuming stays fast even with a large history.
+    path = next((candidate for candidate in paths if session_id in candidate.name), None)
+    if path is None:
+        for candidate in paths:
+            for record in read_json_lines(candidate, 96_000):
+                payload = record.get("payload") or record
+                if str(payload.get("id") or payload.get("session_id") or "") == session_id:
+                    path = candidate
+                    break
+            if path:
+                break
+    if path is None:
+        return []
+    turns = []
+    for record in read_json_lines(path, 2_000_000):
+        payload = record.get("payload") or record
+        if payload.get("type") != "message":
+            continue
+        role = str(payload.get("role") or "")
+        blocks = payload.get("content") or []
+        parts = []
+        if isinstance(blocks, list):
+            for block in blocks:
+                if isinstance(block, dict) and isinstance(block.get("text"), str):
+                    parts.append(block["text"])
+        turn = history_turn(role, "\n".join(parts))
+        if turn:
+            turns.append(turn)
+    return turns[-400:]
+
+
+def session_history(agent, session_id):
+    if agent in ("claude", "nclaude"):
+        return claude_history(session_id)
+    if agent == "codex":
+        return codex_history(session_id)
+    if agent == "opencode":
+        return opencode_history(session_id)
+    return []
+
+
 def opencode_model_history():
     database = Path(os.environ.get("OPENCODE_DB", str(HOME / ".local" / "share" / "opencode" / "opencode.db")))
     if not database.exists():
@@ -1174,6 +1316,13 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 self.send_json(400, {"error": "Unknown agent"})
             else:
                 self.send_json(200, {"agent": agent, "models": model_list(agent)})
+        elif re.fullmatch(r"/api/v1/sessions/[A-Za-z0-9_.-]+/history", parsed.path):
+            session_id = parsed.path.split("/")[4]
+            agent = parse_qs(parsed.query).get("agent", [""])[0]
+            if agent not in AGENT_NAMES:
+                self.send_json(400, {"error": "Unknown agent"})
+            else:
+                self.send_json(200, {"agent": agent, "history": session_history(agent, session_id)})
         elif parsed.path.startswith("/api/v1/sessions/") and parsed.path.endswith("/events"):
             self.stream_session(parsed.path.split("/")[4])
         else:

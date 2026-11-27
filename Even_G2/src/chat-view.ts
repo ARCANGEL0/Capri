@@ -33,3 +33,14 @@ export function pageFromEnd<T>(items: T[], offset: number, visible: number): T[]
 export function maxScrollOffset(total: number, visible: number): number {
   return Math.max(0, total - Math.max(1, visible))
 }
+
+// Turn order is chronological, so the newest user message is the last line
+// until the agent answers; then that answer becomes the last line.
+export function transcriptLines(users: string[], replies: string[]): string[] {
+  const lines: string[] = []
+  for (let i = 0; i < Math.max(users.length, replies.length); i++) {
+    if (users[i]) lines.push(`YOU> ${users[i]}`)
+    if (replies[i]) lines.push(`AGENT> ${replies[i]}`)
+  }
+  return lines
+}

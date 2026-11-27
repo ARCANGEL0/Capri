@@ -14,6 +14,7 @@ try {
       'src/agent-output.ts',
       'src/agent-presentation.ts',
       'src/chat-view.ts',
+      'src/review-text.ts',
       'src/session-order.ts',
       'src/phone-draft.ts',
       'src/gesture.ts',
@@ -28,10 +29,11 @@ try {
   })
   const { AgentOutput } = await import(pathToFileURL(join(dir, 'agent-output.js')).href)
   const { presentAgentScreen } = await import(pathToFileURL(join(dir, 'agent-presentation.js')).href)
-  const { maxScrollOffset, pageFromEnd } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
+  const { maxScrollOffset, pageFromEnd, transcriptLines: turnLines } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
+  const { maxReviewOffset, reviewBody } = await import(pathToFileURL(join(dir, 'review-text.js')).href)
   const { sortSessionsByLastUsed, updatedAtMs } = await import(pathToFileURL(join(dir, 'session-order.js')).href)
   const { draftTextForSubmit } = await import(pathToFileURL(join(dir, 'phone-draft.js')).href)
-  const { interactionActive, shouldDeliverSwipe, swipePageDelta } = await import(pathToFileURL(join(dir, 'gesture.js')).href)
+  const { interactionActive, moveSelection, shouldDeliverSwipe, swipePageDelta } = await import(pathToFileURL(join(dir, 'gesture.js')).href)
   const { liveTexts } = await import(pathToFileURL(join(dir, 'hud-text.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
@@ -106,6 +108,37 @@ try {
   assert.equal(swipePageDelta(7), 14)
   assert.equal(interactionActive(1200, 1000), true)
   assert.equal(interactionActive(3000, 1000), false)
+
+  // Lists advance exactly one row, so the selection never jumps 1 -> 3.
+  assert.equal(moveSelection(0, 'down', 10), 1)
+  assert.equal(moveSelection(1, 'down', 10), 2)
+  assert.equal(moveSelection(1, 'up', 10), 0)
+  assert.equal(moveSelection(0, 'up', 10), 0)
+  assert.equal(moveSelection(9, 'down', 10), 9)
+  assert.equal(moveSelection(3, 'down', 0), 0)
+
+  // Turns stay chronological: a sent message is the bottom line until the
+  // agent answers, then the answer is the bottom line.
+  assert.deepEqual(
+    turnLines(['first', 'second'], ['reply one']),
+    ['YOU> first', 'AGENT> reply one', 'YOU> second'],
+  )
+  assert.deepEqual(
+    turnLines(['first', 'second'], ['reply one', 'reply two']),
+    ['YOU> first', 'AGENT> reply one', 'YOU> second', 'AGENT> reply two'],
+  )
+
+  // Review is text-only: action rows stay visible while the transcript pages.
+  const actions = [{ label: '> Send' }, { label: '  Cancel' }]
+  const shortReview = reviewBody('alpha\nbeta\ngamma\ndelta', actions, 0, 0)
+  assert.equal(shortReview.length, 7)
+  assert.deepEqual(shortReview.slice(-3), ['──────────', '▶ Send', '  Cancel'])
+  assert.deepEqual(shortReview.slice(0, 4), ['alpha', 'beta', 'gamma', 'delta'])
+  assert.equal(reviewBody('alpha\nbeta\ngamma\ndelta', actions, 1, 0).at(-1), '▶ Cancel')
+  const longTranscript = Array.from({ length: 12 }, (_, index) => `line ${index}`).join('\n')
+  assert.equal(maxReviewOffset(longTranscript, actions.length), 8)
+  assert.deepEqual(reviewBody(longTranscript, actions, 0, 0).slice(0, 4), ['line 8', 'line 9', 'line 10', 'line 11'])
+  assert.deepEqual(reviewBody(longTranscript, actions, 0, 8).slice(0, 4), ['line 0', 'line 1', 'line 2', 'line 3'])
 
   // Gesture acknowledgement is a cheap text write, no canvas/tile repaint.
   const ackText = liveTexts({

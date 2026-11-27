@@ -10,6 +10,8 @@ export type InputSource = 'glasses' | 'ring' | 'unknown'
 export const SWIPE_DEDUPE_MS = 24
 /** One physical swipe advances this many visible pages. */
 export const GESTURE_PAGE_FACTOR = 2
+/** Lists move exactly one row per swipe; larger steps make rows appear skipped. */
+export const LIST_STEP = 1
 /** Let the lens settle before background status animation resumes. */
 export const INTERACTION_QUIET_MS = 900
 /** How long the visual acknowledgement marker stays lit. */
@@ -37,4 +39,9 @@ export function swipePageDelta(visible: number, factor = GESTURE_PAGE_FACTOR): n
 
 export function interactionActive(now: number, lastInteractionAt: number): boolean {
   return lastInteractionAt > 0 && now - lastInteractionAt < INTERACTION_QUIET_MS
+}
+
+export function moveSelection(current: number, dir: SwipeDirection, count: number): number {
+  if (count <= 0) return 0
+  return Math.max(0, Math.min(current + (dir === 'down' ? LIST_STEP : -LIST_STEP), count - 1))
 }
