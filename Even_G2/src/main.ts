@@ -12,6 +12,8 @@ import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './st
 import { maxScrollOffset, pageFromEnd, transcriptLines, wrapLine } from './chat-view'
 import { maxReviewOffset, reviewBody } from './review-text'
 import { resolveTapIndex } from './input-router'
+import { eventTypeOf, isEventType, menuIDFromEvent } from './event-intent'
+import { runtimeChoices } from './runtime-choice'
 import { ACK_PULSE_MS, interactionActive, moveSelection, swipePageDelta } from './gesture'
 import { sortSessionsByLastUsed } from './session-order'
 import { Hud, type HudView } from './glasses/hud/display'
@@ -421,6 +423,16 @@ function withAck(view: HudView): HudView {
   return Date.now() < ackUntil ? { ...view, ack: true } : view
 }
 
+function withBridgeTimeout<T>(promise: Promise<T>, timeoutMs: number, what: string): Promise<T> {
+  return new Promise((resolve, reject) => {
+    const timer = window.setTimeout(() => reject(new Error(`${what} timed out`)), timeoutMs)
+    promise.then(
+      (value) => { window.clearTimeout(timer); resolve(value) },
+      (error) => { window.clearTimeout(timer); reject(error) },
+    )
+  })
+}
+
 function startStatusScroll(): void {
   if (statusTimer !== undefined) return
   statusTimer = window.setInterval(() => {
@@ -623,8 +635,6 @@ async function boot(): Promise<void> {
 
   runtime.onTap(() => noteInteraction())
 
-  runtime.onDoubleTap(() => goBack())
-
   void bootSplash()
   if (import.meta.env.DEV && new URLSearchParams(location.search).has('demoApproval')) {
     window.setTimeout(() => showApproval({
@@ -658,29 +668,29 @@ const MENU: Array<{ id: number; label: string }> = [
 function handleEvent(event: EvenHubEvent): void {
   if (!runtime) return
   handleAudio(event)
-  const menuID = event.menuItemClickEvent?.itemID
+  const menuID = menuIDFromEvent(event)
   if (menuID !== undefined) {
+    noteInteraction()
     void handleMenu(menuID)
     return
   }
 
-  const sys = event.sysEvent
-  if (sys) {
-    const type = sys.eventType ?? 0
-    if (type === 7) { cleanup(); return }
-    if (type === 9 || type === 10) return // long press begins/releases
-    if (type === 3) { noteInteraction(); goBack(); return }
-    if (type === 0 && !event.listEvent) {
-      noteInteraction()
-      if (screen === 'error') { goBack(); return }
-      if (screen === 'chat' || screen === 'terminal') {
-        toggleRecording()
-      } else {
-        const row = visibleRows()[selectedRow]
-        if (row) void activateRow(row)
-      }
-      return
+  const sysType = eventTypeOf(event.sysEvent)
+  if (isEventType(event, 7)) { cleanup(); return }
+  if (sysType === 9 || sysType === 10) return // long press begins/releases
+  if (isEventType(event, 3)) { noteInteraction(); goBack(); return }
+  // Protobuf omits CLICK_EVENT (0), and some hosts deliver it on textEvent.
+  // Reading only sysEvent made TAP TO TALK look dead on those builds.
+  if (isEventType(event, 0) && !event.listEvent) {
+    noteInteraction()
+    if (screen === 'error') { goBack(); return }
+    if (screen === 'chat' || screen === 'terminal') {
+      toggleRecording()
+    } else {
+      const row = visibleRows()[selectedRow]
+      if (row) void activateRow(row)
     }
+    return
   }
 
   const listEvent = event.listEvent
@@ -1062,9 +1072,10 @@ async function showAgents(): Promise<void> {
   const deviceName = activeDevice.name
   screen = 'new_agent'
   listPage = 0
-  rows = []
+  rows = [{ label: 'LOADING AGENTS...', action: 'noop' }]
   selectedRow = 0
   status = 'SELECT AGENT'
+  await redraw()
   let loadError = ''
   try {
     const result = await requestJson(activeDevice, '/api/v1/agents') as { agents?: Agent[] }
@@ -1086,13 +1097,23 @@ async function showAgents(): Promise<void> {
 }
 
 async function openModels(agent: Agent, mode: 'new' | 'change' | 'view' = 'view'): Promise<void> {
-  if (!activeDevice) return
+  if (!activeDevice) {
+    screen = 'devices'
+    status = 'LINK A DECK BEFORE MODELS'
+    await redraw()
+    return
+  }
   activeAgent = agent
   modelMode = mode
   modelReturnScreen = screen
   screen = 'new_session'
   listPage = 0
+  rows = [{ label: 'LOADING MODELS...', action: 'noop' }]
+  selectedRow = 0
   status = `${agent.name} models`
+  // Repaint before the request: a slow model list used to look like the menu
+  // item did nothing at all.
+  await redraw()
   try {
     const result = await requestJson(activeDevice, `/api/v1/models?agent=${encodeURIComponent(agent.id)}`, { timeoutMs: 30000 }) as { models?: string[] }
     modelChoices = ['Default', ...(result.models ?? [])]
@@ -1107,10 +1128,16 @@ async function openModels(agent: Agent, mode: 'new' | 'change' | 'view' = 'view'
 }
 
 async function chooseAgentForModels(): Promise<void> {
-  if (!activeDevice) return
+  if (!activeDevice) {
+    screen = 'devices'
+    status = 'LINK A DECK BEFORE MODELS'
+    await redraw()
+    return
+  }
   modelMode = 'view'
   await showAgents()
   status = 'Pick an agent'
+  await redraw()
 }
 
 async function openSessions(): Promise<void> {
@@ -1151,24 +1178,21 @@ async function openSessions(): Promise<void> {
 
 async function showRuntimes(session: SessionInfo): Promise<void> {
   pendingResumeSession = session
-  if (session.agent === 'claude') {
-    const installed = agents
-    const claudeAgent = installed.find((agent) => agent.id === 'claude')
-    const choices = session.runtime
-      ? [session.runtime]
-      : (claudeAgent?.runtimes ?? ['claude']).filter((id) => installed.some((agent) => agent.id === id && agent.available))
-    rows = choices.map((runtime) => ({ label: `Resume with ${runtime}`, action: 'runtime', value: runtime }))
-    if (rows.length > 1) {
-      screen = 'runtimes'
-      status = `Resume ${session.title}`
-      selectedRow = 0
-      await redraw()
-      return
-    }
-    activeRuntime = choices[0] ?? 'claude'
-  } else {
-    activeRuntime = session.agent
+  const choices = runtimeChoices(session)
+  if (choices.length > 1) {
+    rows = choices.map((choice) => ({
+      label: choice.label,
+      detail: choice.detail,
+      action: 'runtime',
+      value: choice.runtime,
+    }))
+    screen = 'runtimes'
+    status = 'PICK CLAUDE OR NCLAUDE'
+    selectedRow = 0
+    await redraw()
+    return
   }
+  activeRuntime = choices[0].runtime
   await startSession(session.agent, '', session.id, activeRuntime)
 }
 
@@ -1689,9 +1713,11 @@ async function startRecording(): Promise<void> {
   if (!bridge || !lensReady || audioActive || audioBusy) return
   audioBusy = true
   audioBuffers = []
+  status = 'MIC STARTING...'
+  await redraw()
   updatePhoneUI(true)
   try {
-    const ok = await bridge.audioControl(true, AudioInputSource.Glasses)
+    const ok = await withBridgeTimeout(bridge.audioControl(true, AudioInputSource.Glasses), 6000, 'Microphone start')
     if (!ok) {
       status = 'MIC UNAVAILABLE  ·  TAP TO RETRY'
       await redraw()
@@ -1712,9 +1738,11 @@ async function startRecording(): Promise<void> {
 async function stopRecording(): Promise<void> {
   if (!bridge || !audioActive || audioBusy) return
   audioBusy = true
+  status = 'MIC STOPPING...'
+  await redraw()
   updatePhoneUI(true)
   try {
-    await bridge.audioControl(false)
+    await withBridgeTimeout(bridge.audioControl(false), 6000, 'Microphone stop')
     audioActive = false
     const total = audioBuffers.reduce((sum, chunk) => sum + chunk.byteLength, 0)
     if (total < 3200) {

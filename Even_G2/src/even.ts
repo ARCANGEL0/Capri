@@ -24,6 +24,7 @@ import { SCREEN_H, SCREEN_W, type Tile } from './glasses/hud/canvas'
 import type { TextBox, TextSlot } from './glasses/hud/pages'
 import type { Layout, LineBox } from './glasses/hud/layouts'
 import { shouldDeliverSwipe, type InputSource, type LastSwipe, type SwipeDirection } from './gesture'
+import { eventTypeOf, isEventType, menuIDFromEvent } from './event-intent'
 
 export type { InputSource, SwipeDirection } from './gesture'
 export type LaunchSourceKind = 'app-menu' | 'glasses-menu' | 'unknown'
@@ -204,15 +205,12 @@ export function connectCapriRuntime(
 
   bridge.onEvenHubEvent(event => {
     if (event.audioEvent) return
-    if (event.menuItemClickEvent) {
-      const id = event.menuItemClickEvent.itemID
-      if (typeof id === 'number') menuHandler?.(id)
+    const menuID = menuIDFromEvent(event)
+    if (menuID !== undefined) {
+      menuHandler?.(menuID)
       return
     }
-    const typeOf = (env?: { eventType?: number }) => (env ? env.eventType ?? 0 : null)
-    const sys = typeOf(event.sysEvent)
-    const txt = typeOf(event.textEvent)
-    const is = (t: number) => sys === t || txt === t
+    const is = (t: number) => isEventType(event, t)
     const source = classifySource(event.sysEvent?.eventSource)
 
     if (is(3)) return doubleTapHandler?.(source) // DOUBLE_CLICK_EVENT
@@ -225,9 +223,9 @@ export function connectCapriRuntime(
       lastSwipe = { type, source, at: now }
       return swipeHandler?.(type === 1 ? 'up' : 'down', source) // SCROLL_TOP / SCROLL_BOTTOM
     }
-    if (sys === 4 || sys === 5) return foregroundHandler?.() // FOREGROUND_ENTER / EXIT
-    if (sys === 9 || sys === 10) return // LONG_PRESS / LONG_PRESS_RELEASE
-    if (sys === 7) return // SYSTEM_EXIT
+    if (eventTypeOf(event.sysEvent) === 4 || eventTypeOf(event.sysEvent) === 5) return foregroundHandler?.()
+    if (eventTypeOf(event.sysEvent) === 9 || eventTypeOf(event.sysEvent) === 10) return // LONG_PRESS / RELEASE
+    if (is(7)) return // SYSTEM_EXIT
     if (is(0)) tapHandler?.(source) // CLICK_EVENT
   })
 

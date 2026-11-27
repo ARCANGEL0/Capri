@@ -20,6 +20,8 @@ try {
       'src/gesture.ts',
       'src/hud-text.ts',
       'src/input-router.ts',
+      'src/event-intent.ts',
+      'src/runtime-choice.ts',
     ],
     outdir: dir,
     format: 'esm',
@@ -37,6 +39,8 @@ try {
   const { interactionActive, moveSelection, shouldDeliverSwipe, swipePageDelta } = await import(pathToFileURL(join(dir, 'gesture.js')).href)
   const { liveTexts } = await import(pathToFileURL(join(dir, 'hud-text.js')).href)
   const { resolveTapIndex } = await import(pathToFileURL(join(dir, 'input-router.js')).href)
+  const { eventTypeOf, isEventType, menuIDFromEvent } = await import(pathToFileURL(join(dir, 'event-intent.js')).href)
+  const { runtimeChoices } = await import(pathToFileURL(join(dir, 'runtime-choice.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
   const redraw = new AgentOutput()
@@ -168,7 +172,23 @@ try {
   assert.equal(resolveTapIndex(reviewRows, undefined, 1, 0), 1)
   assert.equal(resolveTapIndex([], undefined, 0, 0), -1)
 
-  console.log('chat, scroll, session and send regressions passed')
+  // A tap can arrive on either legacy envelope with eventType omitted (0).
+  assert.equal(eventTypeOf(undefined), null)
+  assert.equal(isEventType({ sysEvent: {} }, 0), true)
+  assert.equal(isEventType({ textEvent: {} }, 0), true)
+  assert.equal(isEventType({ audioEvent: {} }, 0), false)
+  assert.equal(isEventType({ textEvent: { eventType: 2 } }, 0), false)
+  assert.equal(isEventType({ sysEvent: { eventType: 3 } }, 3), true)
+  assert.equal(menuIDFromEvent({ menuItemClickEvent: { itemID: 2 } }), 2)
+  assert.equal(menuIDFromEvent({ menuItemClickEvent: { itemID: '4' } }), 4)
+  assert.equal(menuIDFromEvent({}), undefined)
+
+  // Saved Claude sessions always offer both runners, even with a cold cache.
+  assert.deepEqual(runtimeChoices({ agent: 'claude' }).map((choice) => choice.runtime), ['claude', 'nclaude'])
+  assert.deepEqual(runtimeChoices({ agent: 'claude', runtime: 'nclaude' }).map((choice) => choice.label), ['NCLAUDE / NVIDIA', 'CLAUDE'])
+  assert.deepEqual(runtimeChoices({ agent: 'codex' }), [{ runtime: 'codex', label: 'CODEX', detail: '' }])
+
+  console.log('chat, scroll, session, menu, mic and runtime regressions passed')
 } finally {
   await rm(dir, { recursive: true, force: true })
 }
