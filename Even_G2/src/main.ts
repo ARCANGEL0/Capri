@@ -11,6 +11,7 @@ import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
 import { maxScrollOffset, pageFromEnd, transcriptLines, wrapLine } from './chat-view'
 import { maxReviewOffset, reviewBody } from './review-text'
+import { resolveTapIndex } from './input-router'
 import { ACK_PULSE_MS, interactionActive, moveSelection, swipePageDelta } from './gesture'
 import { sortSessionsByLastUsed } from './session-order'
 import { Hud, type HudView } from './glasses/hud/display'
@@ -685,13 +686,8 @@ function handleEvent(event: EvenHubEvent): void {
   const listEvent = event.listEvent
   if (!listEvent) return
   const pageRows = visibleRows()
-  const namedIndex = listEvent.currentSelectItemName
-    ? pageRows.findIndex((row) => row.label === listEvent.currentSelectItemName)
-    : -1
-  const index = typeof listEvent.currentSelectItemIndex === 'number'
-    ? listEvent.currentSelectItemIndex
-    : namedIndex
-  if (index >= 0 && index < pageRows.length && index !== selectedRow) {
+  const index = resolveTapIndex(pageRows, listEvent.currentSelectItemName, listEvent.currentSelectItemIndex, selectedRow)
+  if (index >= 0 && index !== selectedRow) {
     noteInteraction()
     selectedRow = index
     if (screen === 'review' || screen === 'approval') void redraw()
@@ -1771,24 +1767,36 @@ function handleAudio(event: EvenHubEvent): void {
 }
 
 async function sendInput(text: string, terminal: boolean): Promise<void> {
+  const message = text.trim()
+  if (!message) throw new Error('Nothing to send')
   const session = activeSession
   const device = activeSessionDevice ?? activeDevice
   if (!device || !session) throw new Error('No active Capri session is attached')
-  const input = `${text}\n`
+  // Text sent while a harness prompt is open gets eaten by its option selector
+  // instead of becoming a chat turn, so surface the prompt instead.
+  if (!terminal && (pendingApproval || pendingInput)) {
+    status = pendingApproval ? 'APPROVAL NEEDED  ·  CHOOSE FIRST' : 'INPUT NEEDED  ·  CHOOSE FIRST'
+    screen = 'approval'
+    await redraw()
+    return
+  }
+  const input = `${message}\n`
   const response = await postSessionInput(device, session.id, input)
   if (!response) throw new Error('Input was not accepted')
   if (terminal) {
-    terminalText += `\n$ ${text}\n`
+    terminalText += `\n$ ${message}\n`
     terminalOffset = 0
     screen = 'terminal'
   } else {
-    chatHistory.push({ kind: 'in', text, timestamp: Date.now() })
+    chatHistory.push({ kind: 'in', text: message, timestamp: Date.now() })
     chatOffset = 0
     chatAutoFollowing = true
     screen = 'chat'
   }
   promptText = ''
-  status = terminal ? 'LIVE  ·  TAP TO TALK' : 'LIVE  ·  TAP TO TALK'
+  reviewOffset = 0
+  // Visible confirmation that the runtime accepted the text for this session.
+  status = `SENT  ·  ${session.title.slice(0, 28)}`
   await redraw()
 }
 

@@ -1381,6 +1381,7 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not text or len(text) > 12000:
                     self.send_json(*api_error("Input is empty or too long"))
                     return
+                print(f"Capri input -> {session.agent}/{session.saved_id or session.id}: {text.strip()[:160]!r}", flush=True)
                 session.write(text)
                 self.send_json(200, {"accepted": True})
             elif re.fullmatch(r"/api/v1/sessions/[a-f0-9]{16}/model", parsed.path):

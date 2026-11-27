@@ -19,6 +19,7 @@ try {
       'src/phone-draft.ts',
       'src/gesture.ts',
       'src/hud-text.ts',
+      'src/input-router.ts',
     ],
     outdir: dir,
     format: 'esm',
@@ -35,6 +36,7 @@ try {
   const { draftTextForSubmit } = await import(pathToFileURL(join(dir, 'phone-draft.js')).href)
   const { interactionActive, moveSelection, shouldDeliverSwipe, swipePageDelta } = await import(pathToFileURL(join(dir, 'gesture.js')).href)
   const { liveTexts } = await import(pathToFileURL(join(dir, 'hud-text.js')).href)
+  const { resolveTapIndex } = await import(pathToFileURL(join(dir, 'input-router.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
   const redraw = new AgentOutput()
@@ -154,6 +156,17 @@ try {
   // The transcript Send button and the typed composer take different sources.
   assert.equal(draftTextForSubmit('TRANSCRIPT READY  ·  SEND OR CANCEL', 'ship it', ''), 'ship it')
   assert.equal(draftTextForSubmit('LIVE  ·  TAP TO TALK', 'old transcript', 'typed message'), 'typed message')
+
+  // Text-only review has no native list, so unmatched host indices must fall
+  // back to the app's selection instead of dropping the Send tap.
+  const reviewRows = [{ label: '> Send' }, { label: '  Cancel' }]
+  assert.equal(resolveTapIndex(reviewRows, undefined, undefined, 0), 0)
+  assert.equal(resolveTapIndex(reviewRows, undefined, -1, 0), 0)
+  assert.equal(resolveTapIndex(reviewRows, 'Send', undefined, 0), 0)
+  assert.equal(resolveTapIndex(reviewRows, '▶ Cancel', undefined, 0), 1)
+  assert.equal(resolveTapIndex(reviewRows, undefined, 99, 0), 0)
+  assert.equal(resolveTapIndex(reviewRows, undefined, 1, 0), 1)
+  assert.equal(resolveTapIndex([], undefined, 0, 0), -1)
 
   console.log('chat, scroll, session and send regressions passed')
 } finally {
