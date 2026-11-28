@@ -22,6 +22,7 @@ try {
       'src/input-router.ts',
       'src/event-intent.ts',
       'src/runtime-choice.ts',
+      'src/transcript-history.ts',
     ],
     outdir: dir,
     format: 'esm',
@@ -41,6 +42,7 @@ try {
   const { resolveTapIndex } = await import(pathToFileURL(join(dir, 'input-router.js')).href)
   const { eventTypeOf, isEventType, menuIDFromEvent } = await import(pathToFileURL(join(dir, 'event-intent.js')).href)
   const { runtimeChoices } = await import(pathToFileURL(join(dir, 'runtime-choice.js')).href)
+  const { historyLines, historyHasTurn, historyReplyAfterUser, mergeTranscript } = await import(pathToFileURL(join(dir, 'transcript-history.js')).href)
 
   // Cursor-left redraws must replace text, not concatenate it.
   const redraw = new AgentOutput()
@@ -161,6 +163,36 @@ try {
   assert.ok(wrapped.length > 1)
   assert.equal(MAX_BODY_LINES, 6)
   assert.ok(CHAT_WIDTH_PX <= 560)
+
+  // The saved transcript is authoritative: a message written by another Claude
+  // process on the same session must appear without being echoed twice.
+  const saved = historyLines([
+    { role: 'user', text: 'older question' },
+    { role: 'assistant', text: 'older answer' },
+    { role: 'user', text: 'Reply ok' },
+  ])
+  assert.deepEqual(saved, ['YOU> older question', 'AGENT> older answer', 'YOU> Reply ok'])
+  assert.equal(historyHasTurn(saved, 'YOU>', 'Reply ok'), true)
+  assert.equal(historyHasTurn(saved, 'YOU>', 'Reply okay'), false)
+  assert.equal(historyReplyAfterUser(saved, 'Reply ok'), false)
+  assert.deepEqual(
+    mergeTranscript(saved, [{ text: 'Reply ok' }], ['older answer']),
+    saved,
+    'confirmed local lines must not be appended again',
+  )
+  assert.deepEqual(
+    mergeTranscript(saved, [], []),
+    saved,
+  )
+  const liveStream = historyLines([{ role: 'user', text: 'Reply ok' }])
+  assert.deepEqual(
+    mergeTranscript(liveStream, [{ text: 'Reply ok' }], ['Yes. The repo is at v1.2.73.']),
+    ['YOU> Reply ok', 'AGENT> Yes. The repo is at v1.2.73.'],
+  )
+  assert.equal(
+    historyReplyAfterUser([...saved, 'AGENT> Yes, confirmed.'], 'Reply ok'),
+    true,
+  )
 
   // Review is text-only: action rows stay visible while the transcript pages.
   const actions = [{ label: '> Send' }, { label: '  Cancel' }]

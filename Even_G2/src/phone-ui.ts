@@ -80,6 +80,7 @@ export type PhoneSnapshot = {
   chatHistory: PhoneChatLine[]
   terminalText: string
   agentScreenText: string
+  transcriptText: string
   agentScreenHeader: string
   draftText: string
   pendingApproval?: PhoneApproval
@@ -899,7 +900,7 @@ export class PhoneUI {
     const models = state.modelsByDevice[state.activeSessionDeviceName ?? '']?.[active.agent] ?? []
     const modelControl = models.length ? `<label class="field-label compact-field">Model<select data-action="change-model" data-device="${attr(state.activeSessionDeviceName ?? '')}">${this.modelOptions(models, state.activeModel)}</select></label>` : ''
     const draft = state.draftText.trim()
-    const reply = state.agentScreenText.trim() || 'Waiting for model response…'
+    const reply = state.transcriptText.trim() || state.agentScreenText.trim() || 'Waiting for model response…'
     const draftCard = draft && /TRANSCRIPT READY|REVIEW \/ PROMPT|REVIEW \/ COMMAND/i.test(state.status)
       ? `<section class="voice-draft" aria-live="polite"><div class="section-title"><h3>Transcript</h3><span>Review before sending</span></div><pre>${escapeHtml(draft)}</pre><div class="voice-draft-actions"><button class="button button-primary" type="button" data-action="send">Send transcript</button><button class="button" type="button" data-action="cancel">Rewrite</button></div></section>`
       : ''
@@ -935,7 +936,11 @@ export class PhoneUI {
       this.restoringMainScroll = false
     }
     if (terminal) terminal.scrollTop = Math.min(previousTerminalScroll, terminal.scrollHeight)
-    if (feed) feed.scrollTop = Math.min(previousFeedScroll, feed.scrollHeight)
+    if (feed) {
+      // The phone chat feed follows the newest turn; the glasses preview keeps
+      // its own six-line window.
+      feed.scrollTop = this.snapshot?.settings.autoScroll ? feed.scrollHeight : Math.min(previousFeedScroll, feed.scrollHeight)
+    }
     if (glasses) glasses.scrollTop = Math.min(previousGlassesScroll, glasses.scrollHeight)
     if (this.restoreFrame !== undefined) {
       window.cancelAnimationFrame(this.restoreFrame)

@@ -11,6 +11,7 @@ import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
 import { maxScrollOffset, pageFromEnd, turnTranscript, wrapLine, MAX_BODY_LINES } from './chat-view'
 import { maxReviewOffset, reviewBody } from './review-text'
+import { historyLines, historyHasTurn, historyReplyAfterUser, mergeTranscript, type HistoryTurn } from './transcript-history'
 import { resolveTapIndex } from './input-router'
 import { eventTypeOf, isEventType, menuIDFromEvent } from './event-intent'
 import { runtimeChoices } from './runtime-choice'
@@ -51,6 +52,7 @@ const PHONE_STORAGE_KEYS = [
 ]
 const LIST_PAGE_SIZE = 5
 const MAX_HISTORY = 500
+const MAX_HISTORY_TURNS = 120
 
 const SPLASH_FRAME_MS = 90
 const SPLASH_FRAMES = 5
@@ -260,33 +262,46 @@ function setAgentTranscript(value: string): void {
 }
 
 // Saved sessions live in the harness (SQLite/JSONL), not in this app's local
-// storage. Pull every turn so resuming shows the whole conversation and the
-// user can keep scrolling back through it.
-async function loadSessionHistory(device: Device, agent: string, sessionID: string): Promise<boolean> {
-  if (!sessionID || agent === 'terminal') return false
+// storage. Pull the newest turns so resuming shows the real conversation even
+// when another Claude TUI has the same saved session open.
+async function fetchSessionHistory(device: Device, agent: string, sessionID: string): Promise<string[] | undefined> {
+  if (!sessionID || agent === 'terminal') return undefined
   try {
     const data = await requestJson(device, `/api/v1/sessions/${encodeURIComponent(sessionID)}/history?agent=${encodeURIComponent(agent)}`, {
       timeoutMs: 12000,
-    }) as { history?: Array<{ role?: string; text?: string }> }
-    const lines: string[] = []
-    for (const turn of Array.isArray(data.history) ? data.history : []) {
-      const text = typeof turn.text === 'string' ? turn.text.trim() : ''
-      if (text) lines.push(`${turn.role === 'user' ? 'YOU>' : 'AGENT>'} ${text}`)
-    }
-    if (!lines.length) return false
-    loadedHistoryLines = lines
-    // The resumed PTY starts fresh; a stale local transcript would duplicate it.
-    agentScreenHistory = []
-    lastAgentScreen = ''
-    agentTranscript = ''
-    agentOutput = new AgentOutput()
-    agentTerminal.reset()
-    chatOffset = 0
-    chatAutoFollowing = true
-    return true
+    }) as { history?: HistoryTurn[] }
+    const lines = historyLines(Array.isArray(data.history) ? data.history : [])
+    return lines.length ? lines.slice(-MAX_HISTORY_TURNS) : undefined
   } catch {
-    return false
+    return undefined
   }
+}
+
+function historySignature(lines: string[]): string {
+  return `${lines.length}:${lines.slice(-4).join('\n')}`
+}
+
+function applySessionHistory(lines: string[], initial: boolean): void {
+  const changed = historySignature(lines) !== historySignature(loadedHistoryLines)
+  loadedHistoryLines = lines
+  if (changed && settings.autoScroll && chatAutoFollowing) chatOffset = 0
+  if (!initial) return
+  // The resumed PTY starts fresh; a stale local transcript would duplicate it.
+  agentScreenHistory = []
+  lastAgentScreen = ''
+  agentTranscript = ''
+  agentOutput = new AgentOutput()
+  agentTerminal.reset()
+  pendingConfirmationText = ''
+  chatOffset = 0
+  chatAutoFollowing = true
+}
+
+async function loadSessionHistory(device: Device, agent: string, sessionID: string): Promise<boolean> {
+  const lines = await fetchSessionHistory(device, agent, sessionID)
+  if (!lines) return false
+  applySessionHistory(lines, true)
+  return true
 }
 
 function savedApprovalIds(): string[] {
@@ -333,6 +348,11 @@ let agentScreenHistory: string[] = []
 let loadedHistoryLines: string[] = []
 let lastAgentScreen = ''
 let screenHistoryTimer: number | undefined
+let historyRefreshTimer: number | undefined
+let historyRefreshInFlight = false
+let pendingConfirmationText = ''
+let confirmationTimer: number | undefined
+let confirmationAttempts = 0
 let modelMode: 'new' | 'change' | 'view' = 'view'
 let modelReturnScreen: Screen = 'devices'
 let moreReturnScreen: Screen = 'devices'
@@ -472,6 +492,7 @@ function updatePhoneUI(immediate = false): void {
     chatHistory,
     terminalText,
     agentScreenText: activeSession && activeSession.agent !== 'terminal' ? formatChat() : '',
+    transcriptText: activeSession && activeSession.agent !== 'terminal' ? phoneTranscriptText() : '',
     agentScreenHeader: activeSession && activeSession.agent !== 'terminal' ? 'LIVE' : '',
     draftText: promptText,
     pendingApproval,
@@ -1517,6 +1538,9 @@ function appendChatText(text: string): void {
   if (chatHistory.length > maxChatHistory()) chatHistory.splice(0, chatHistory.length - maxChatHistory())
 }
 
+const HISTORY_REFRESH_MS = 2500
+const CONFIRM_ATTEMPTS = 12
+
 function startAgentScreenHistory(): void {
   stopAgentScreenHistory()
   screenHistoryTimer = window.setInterval(() => {
@@ -1545,6 +1569,75 @@ function startAgentScreenHistory(): void {
     writeChatTranscript(activeSessionDevice?.name ?? activeDevice?.name ?? '', activeSavedSessionId, agentTranscript)
     updatePhoneUI()
   }, 700)
+  startSessionHistoryRefresh()
+}
+
+function startSessionHistoryRefresh(): void {
+  stopSessionHistoryRefresh()
+  historyRefreshTimer = window.setInterval(() => {
+    if (!activeSession || !activeSavedSessionId || !activeSessionDevice) return
+    if (!['chat', 'approval', 'review'].includes(screen)) return
+    void refreshSessionHistory()
+  }, HISTORY_REFRESH_MS)
+}
+
+function stopSessionHistoryRefresh(): void {
+  if (historyRefreshTimer !== undefined) window.clearInterval(historyRefreshTimer)
+  historyRefreshTimer = undefined
+}
+
+function stopConfirmationTimer(): void {
+  if (confirmationTimer !== undefined) window.clearTimeout(confirmationTimer)
+  confirmationTimer = undefined
+  confirmationAttempts = 0
+}
+
+function updateStatusFromHistory(lines: string[]): void {
+  if (!pendingConfirmationText || !activeSession) return
+  if (!historyHasTurn(lines, 'YOU>', pendingConfirmationText)) return
+  const replied = historyReplyAfterUser(lines, pendingConfirmationText)
+  const label = activeSession.title.slice(0, 24)
+  if (/^(?:ACCEPTED|SENT|REPLY)\b/.test(status)) status = `${replied ? 'REPLY' : 'SENT'}  ·  ${label}`
+  pendingConfirmationText = ''
+  stopConfirmationTimer()
+}
+
+async function refreshSessionHistory(): Promise<void> {
+  if (historyRefreshInFlight) return
+  const session = activeSession
+  const device = activeSessionDevice
+  const savedID = activeSavedSessionId
+  if (!session || !device || !savedID || session.agent === 'terminal') return
+  historyRefreshInFlight = true
+  let lines: string[] | undefined
+  try {
+    lines = await fetchSessionHistory(device, session.agent, savedID)
+  } finally {
+    historyRefreshInFlight = false
+  }
+  if (!lines) return
+  // Discard a response that arrived after the user switched sessions.
+  if (activeSession?.id !== session.id || activeSavedSessionId !== savedID || activeSessionDevice?.name !== device.name) return
+  const changed = historySignature(lines) !== historySignature(loadedHistoryLines)
+  const statusBefore = status
+  applySessionHistory(lines, false)
+  updateStatusFromHistory(lines)
+  if (changed || status !== statusBefore) {
+    updatePhoneUI(true)
+    renderLive(true)
+  }
+}
+
+function scheduleHistoryConfirmation(): void {
+  stopConfirmationTimer()
+  const tick = (): void => {
+    confirmationAttempts += 1
+    void refreshSessionHistory().then(() => {
+      if (!pendingConfirmationText || confirmationAttempts >= CONFIRM_ATTEMPTS) return
+      confirmationTimer = window.setTimeout(tick, 1100)
+    })
+  }
+  confirmationTimer = window.setTimeout(tick, 650)
 }
 
 function showInteractivePrompt(prompt: InteractivePrompt): void {
@@ -1558,9 +1651,10 @@ function showInteractivePrompt(prompt: InteractivePrompt): void {
 }
 
 function stopAgentScreenHistory(): void {
-  if (screenHistoryTimer === undefined) return
-  window.clearInterval(screenHistoryTimer)
+  if (screenHistoryTimer !== undefined) window.clearInterval(screenHistoryTimer)
   screenHistoryTimer = undefined
+  stopSessionHistoryRefresh()
+  stopConfirmationTimer()
 }
 
 function appendTerminal(current: string, text: string): string {
@@ -1646,6 +1740,20 @@ function agentReplyCount(): number {
 }
 
 function agentChatTranscript(): string {
+  if (!loadedHistoryLines.length) {
+    // No saved history yet (a brand-new session): keep the local ordering.
+    const users = chatHistory
+      .filter((line) => line.kind === 'in')
+      .map((line) => ({ text: line.text, replyCount: line.replyCount }))
+    const replies = agentScreenHistory.map((reply) => reply.split('\n').map(readableReplyLine).join('\n'))
+    const current = formatAgentResponse()
+    if (current && current !== agentScreenHistory.at(-1)) {
+      replies.push(current.split('\n').map(readableReplyLine).join('\n'))
+    }
+    return turnTranscript(users, replies).join('\n')
+  }
+  // The persisted session is authoritative. Local PTY lines are only a
+  // streaming overlay until the harness writes them to the transcript.
   const users = chatHistory
     .filter((line) => line.kind === 'in')
     .map((line) => ({ text: line.text, replyCount: line.replyCount }))
@@ -1654,9 +1762,7 @@ function agentChatTranscript(): string {
   if (current && current !== agentScreenHistory.at(-1)) {
     replies.push(current.split('\n').map(readableReplyLine).join('\n'))
   }
-  // Server history comes first, then live turns in the order they happened.
-  // A reply still streaming when you sent stays above that send.
-  return turnTranscript(users, replies, loadedHistoryLines).join('\n')
+  return mergeTranscript(loadedHistoryLines, users, replies).join('\n')
 }
 
 function agentChatLineCount(): number {
@@ -1680,6 +1786,15 @@ function formatChat(): string {
   const lines = pageFromEnd(flattened, chatOffset, visibleChatLines())
   const viewStatus = chatOffset ? `${status}  /  HISTORY ↑` : status
   return [`${viewStatus}`, '', ...lines].join('\n')
+}
+
+function phoneTranscriptText(): string {
+  const limit = settings.verbosity === 'verbose' ? 240 : 120
+  return agentChatTranscript()
+    .split('\n')
+    .slice(-limit)
+    .map((line) => line.length > 4000 ? `${line.slice(0, 3997)}...` : line)
+    .join('\n')
 }
 
 function readableReplyLine(line: string): string {
@@ -1836,8 +1951,13 @@ async function sendInput(text: string, terminal: boolean): Promise<void> {
   }
   promptText = ''
   reviewOffset = 0
-  // Visible confirmation that the runtime accepted the text for this session.
-  status = `SENT  ·  ${session.title.slice(0, 28)}`
+  if (!terminal) {
+    // HTTP 200 only proves the PTY accepted the write. Do not claim it reached
+    // the saved session until the transcript contains the message.
+    pendingConfirmationText = message
+    status = `ACCEPTED  ·  ${session.title.slice(0, 24)}`
+    scheduleHistoryConfirmation()
+  }
   await redraw()
 }
 
