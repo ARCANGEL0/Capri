@@ -325,7 +325,12 @@ def codex_update_prompt_output(text):
 
 
 def agent_input_ready(session):
-    """Check whether typed text would become a chat turn instead of a queued input."""
+    """Describe the harness state for logging. Never use this to block a send.
+
+    Claude Code queues keystrokes typed during a turn and submits them as a new
+    user turn when that turn ends, so a busy spinner is not a reason to drop the
+    message. Only real approval prompts are handled before sending.
+    """
     if session.done or session.process.poll() is not None:
         return False, "Session closed"
     if session.approval:
@@ -1436,32 +1441,31 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not text or len(text) > 12000:
                     self.send_json(*api_error("Input is empty or too long"))
                     return
-                # Typing into a busy harness only queues the text; it never
-                # becomes a user turn. Wait briefly for the idle prompt, then
-                # report a real failure instead of claiming the send succeeded.
-                if session.kind == "agent":
-                    deadline = time.monotonic() + 8
-                    while True:
-                        ready, reason = agent_input_ready(session)
-                        if ready:
-                            break
-                        if time.monotonic() >= deadline:
-                            self.send_json(409, {"error": f"Agent busy: {reason}. Wait for the prompt, then resend."})
-                            return
-                        time.sleep(0.3)
+                # A busy harness is not an error. Claude Code queues typed
+                # input and turns it into a user message when the current turn
+                # ends, so always deliver the keystrokes and report that the
+                # message may be queued.
+                if session.kind == "agent" and session.approval:
+                    self.send_json(409, {"error": "Approval needed. Choose an option first."})
+                    return
                 payload = text.rstrip("\r\n")
                 before = session.recent_output()
+                ready, state = agent_input_ready(session) if session.kind == "agent" else (True, "")
+                queued = not ready and state not in ("Session closed", "Approval needed")
+                if queued:
+                    print(f"Capri input state: {state}; sending anyway (Claude will queue it)", flush=True)
                 print(f"Capri input -> {session.agent}/{session.saved_id or session.id}: {payload.strip()[:160]!r}", flush=True)
                 print(f"Capri prompt before input: {before!r}", flush=True)
                 # A TUI reads one PTY write as a paste. Send the body and the
-                # Enter keystroke separately so it is submitted, not inserted.
+                # Enter keystroke separately so it is submitted or queued, not
+                # inserted as literal text in the composer.
                 session.write(payload)
                 time.sleep(0.12)
                 session.write("\r")
                 time.sleep(0.25)
                 after = session.recent_output()
                 print(f"Capri prompt after input: {after!r}", flush=True)
-                self.send_json(200, {"accepted": True})
+                self.send_json(200, {"accepted": True, "queued": queued, "state": state if queued else ""})
             elif re.fullmatch(r"/api/v1/sessions/[a-f0-9]{16}/model", parsed.path):
                 session_id = parsed.path.split("/")[4]
                 session = self.get_session(session_id)

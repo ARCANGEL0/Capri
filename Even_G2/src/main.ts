@@ -1597,7 +1597,7 @@ function updateStatusFromHistory(lines: string[]): void {
   if (!historyHasTurn(lines, 'YOU>', pendingConfirmationText)) return
   const replied = historyReplyAfterUser(lines, pendingConfirmationText)
   const label = activeSession.title.slice(0, 24)
-  if (/^(?:ACCEPTED|SENT|REPLY)\b/.test(status)) status = `${replied ? 'REPLY' : 'SENT'}  ·  ${label}`
+  if (/^(?:ACCEPTED|QUEUED|SENT|REPLY)\b/.test(status)) status = `${replied ? 'REPLY' : 'SENT'}  ·  ${label}`
   pendingConfirmationText = ''
   stopConfirmationTimer()
 }
@@ -1932,8 +1932,9 @@ async function sendInput(text: string, terminal: boolean): Promise<void> {
   }
   // The runtime sends the body and Enter as separate PTY writes. Appending our
   // own newline here makes the harness treat the whole thing as a paste.
-  const response = await postSessionInput(device, session.id, message)
-  if (!response) throw new Error('Input was not accepted')
+  const response = await postSessionInput(device, session.id, message) as { accepted?: boolean; queued?: boolean } | undefined
+  if (!response?.accepted) throw new Error('Input was not accepted')
+  const queued = Boolean(response.queued)
   if (terminal) {
     terminalText += `\n$ ${message}\n`
     terminalOffset = 0
@@ -1955,7 +1956,7 @@ async function sendInput(text: string, terminal: boolean): Promise<void> {
     // HTTP 200 only proves the PTY accepted the write. Do not claim it reached
     // the saved session until the transcript contains the message.
     pendingConfirmationText = message
-    status = `ACCEPTED  ·  ${session.title.slice(0, 24)}`
+    status = `${queued ? 'QUEUED' : 'ACCEPTED'}  ·  ${session.title.slice(0, 20)}`
     scheduleHistoryConfirmation()
   }
   await redraw()
