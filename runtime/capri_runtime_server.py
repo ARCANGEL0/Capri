@@ -108,6 +108,8 @@ class ManagedSession:
         self.done = False
         self.approval = None
         self.text_tail = ""
+        self.output_tail = ""
+        self.last_output_at = time.time()
         self.startup_prompt_tail = ""
         self.startup_update_skipped = False
         self.startup_update_scheduled = False
@@ -140,8 +142,11 @@ class ManagedSession:
                     break
                 text = data.decode("utf-8", "replace")
                 suppress_startup_prompt = False
+                clean = terminal_text(text)
+                with self.changed:
+                    self.output_tail = (self.output_tail + clean)[-6000:]
+                    self.last_output_at = time.time()
                 if self.kind == "agent":
-                    clean = terminal_text(text)
                     self.startup_prompt_tail = (self.startup_prompt_tail + clean)[-4000:]
                     if (
                         self.agent == "codex"
@@ -182,6 +187,11 @@ class ManagedSession:
             if self.done or self.process.poll() is not None:
                 raise RuntimeError("Session is closed")
             os.write(self.master_fd, data)
+
+    def recent_output(self):
+        """Short tail of what the harness drew, for input diagnostics."""
+        with self.changed:
+            return re.sub(r"\s+", " ", self.output_tail[-800:]).strip()
 
     def stop(self):
         if self.process.poll() is not None:
@@ -1382,7 +1392,19 @@ class Handler(http.server.BaseHTTPRequestHandler):
                     self.send_json(*api_error("Input is empty or too long"))
                     return
                 print(f"Capri input -> {session.agent}/{session.saved_id or session.id}: {text.strip()[:160]!r}", flush=True)
-                session.write(text)
+                # A TUI reads one PTY write as a paste. If the trailing newline
+                # arrives inside that paste it is inserted as text, not treated
+                # as Enter, so the message sits in the composer forever. Send
+                # the body and the Enter keystroke as separate writes.
+                payload = text.rstrip("\r\n")
+                before = session.recent_output()
+                print(f"Capri prompt before input: {before!r}", flush=True)
+                session.write(payload)
+                time.sleep(0.12)
+                session.write("\r")
+                time.sleep(0.25)
+                after = session.recent_output()
+                print(f"Capri prompt after input: {after!r}", flush=True)
                 self.send_json(200, {"accepted": True})
             elif re.fullmatch(r"/api/v1/sessions/[a-f0-9]{16}/model", parsed.path):
                 session_id = parsed.path.split("/")[4]

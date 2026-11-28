@@ -9,7 +9,7 @@ import { AgentOutput } from './agent-output'
 import { TerminalScreen } from './terminal-screen'
 import { connectCapriRuntime, type CapriRuntime } from './even'
 import { isSttReady, parseSttSettings, transcribe, type SttSettings } from './stt'
-import { maxScrollOffset, pageFromEnd, transcriptLines, wrapLine } from './chat-view'
+import { maxScrollOffset, pageFromEnd, turnTranscript, wrapLine, MAX_BODY_LINES } from './chat-view'
 import { maxReviewOffset, reviewBody } from './review-text'
 import { resolveTapIndex } from './input-router'
 import { eventTypeOf, isEventType, menuIDFromEvent } from './event-intent'
@@ -34,7 +34,7 @@ type Agent = { id: string; name: string; available: boolean; runtimes?: string[]
 type SessionInfo = { id: string; agent: string; title: string; updatedAt?: number; runtime?: string; cwd?: string; needsApproval?: boolean }
 type Approval = { agent: string; prompt: string; options: Array<{ id: string; label: string }> }
 type Row = { label: string; action: string; value?: string; detail?: string; activity?: string; approval?: boolean }
-type ChatLine = { kind: 'out' | 'in' | 'sys'; text: string; timestamp?: number }
+type ChatLine = { kind: 'out' | 'in' | 'sys'; text: string; timestamp?: number; replyCount?: number }
 type ApiBody = BodyInit | Record<string, unknown>
 type ApiInit = Omit<RequestInit, 'body'> & { body?: ApiBody; timeoutMs?: number }
 
@@ -51,7 +51,6 @@ const PHONE_STORAGE_KEYS = [
 ]
 const LIST_PAGE_SIZE = 5
 const MAX_HISTORY = 500
-const DEFAULT_VISIBLE_CHAT_LINES = 7
 
 const SPLASH_FRAME_MS = 90
 const SPLASH_FRAMES = 5
@@ -1639,19 +1638,29 @@ function formatAgentResponse(): string {
   return presentAgentScreen(agentOutput.text() || agentTerminal.text()).response
 }
 
-function agentChatTranscript(): string {
-  const users = chatHistory.filter((line) => line.kind === 'in').map((line) => line.text)
-  const replies = [...agentScreenHistory]
+// How many agent responses had started before now. A reply still streaming
+// counts, so a send made during it is placed after that reply in the transcript.
+function agentReplyCount(): number {
   const current = formatAgentResponse()
-  if (current) replies.push(current)
-  const live = transcriptLines(users, replies.map((reply) => reply.split('\n').map(readableReplyLine).join('\n')))
-  // Server history comes first, then anything said in this session, so the
-  // newest turn is always the last line on the lens.
-  return [...loadedHistoryLines, ...live].join('\n')
+  return agentScreenHistory.length + (current && current !== agentScreenHistory.at(-1) ? 1 : 0)
+}
+
+function agentChatTranscript(): string {
+  const users = chatHistory
+    .filter((line) => line.kind === 'in')
+    .map((line) => ({ text: line.text, replyCount: line.replyCount }))
+  const replies = agentScreenHistory.map((reply) => reply.split('\n').map(readableReplyLine).join('\n'))
+  const current = formatAgentResponse()
+  if (current && current !== agentScreenHistory.at(-1)) {
+    replies.push(current.split('\n').map(readableReplyLine).join('\n'))
+  }
+  // Server history comes first, then live turns in the order they happened.
+  // A reply still streaming when you sent stays above that send.
+  return turnTranscript(users, replies, loadedHistoryLines).join('\n')
 }
 
 function agentChatLineCount(): number {
-  return agentChatTranscript().split('\n').flatMap((line) => wrapLine(line, 50)).length
+  return agentChatTranscript().split('\n').flatMap((line) => wrapLine(line)).length
 }
 
 function liveHistoryStatus(): string {
@@ -1663,11 +1672,11 @@ function formatChat(): string {
   if (activeSession && activeSession.agent !== 'terminal') {
     if (audioActive) return '● LISTENING\nSpeak your instruction\nTap once to stop · review before send'
     if (audioBusy && status === 'TRANSCRIBING VOICE...') return 'TRANSCRIBING VOICE\nYour transcript will appear for review'
-    const chunks = agentChatTranscript().split('\n').flatMap((line) => wrapLine(line, 50))
+    const chunks = agentChatTranscript().split('\n').flatMap((line) => wrapLine(line))
     const lines = pageFromEnd(chunks, chatOffset, visibleChatLines())
     return lines.length ? lines.join('\n') : (status === 'LIVE  ·  TAP TO TALK' ? 'No model reply yet.' : status)
   }
-  const flattened = chatHistory.flatMap((line) => wrapLine(`${line.kind === 'in' ? 'YOU › ' : line.kind === 'sys' ? '· ' : ''}${line.text}`, 50))
+  const flattened = chatHistory.flatMap((line) => wrapLine(`${line.kind === 'in' ? 'YOU › ' : line.kind === 'sys' ? '· ' : ''}${line.text}`))
   const lines = pageFromEnd(flattened, chatOffset, visibleChatLines())
   const viewStatus = chatOffset ? `${status}  /  HISTORY ↑` : status
   return [`${viewStatus}`, '', ...lines].join('\n')
@@ -1686,15 +1695,13 @@ function formatTerminal(): string {
 }
 
 function visibleChatLines(): number {
-  if (settings.hudDensity === 'spacious') return 5
-  if (settings.hudDensity === 'compact') return 8
-  return DEFAULT_VISIBLE_CHAT_LINES
+  if (settings.hudDensity === 'spacious') return 4
+  return MAX_BODY_LINES
 }
 
 function visibleTerminalLines(): number {
-  if (settings.hudDensity === 'spacious') return 6
-  if (settings.hudDensity === 'compact') return 12
-  return 9
+  if (settings.hudDensity === 'spacious') return 4
+  return MAX_BODY_LINES
 }
 
 function maxChatHistory(): number {
@@ -1808,15 +1815,21 @@ async function sendInput(text: string, terminal: boolean): Promise<void> {
     await redraw()
     return
   }
-  const input = `${message}\n`
-  const response = await postSessionInput(device, session.id, input)
+  // The runtime sends the body and Enter as separate PTY writes. Appending our
+  // own newline here makes the harness treat the whole thing as a paste.
+  const response = await postSessionInput(device, session.id, message)
   if (!response) throw new Error('Input was not accepted')
   if (terminal) {
     terminalText += `\n$ ${message}\n`
     terminalOffset = 0
     screen = 'terminal'
   } else {
-    chatHistory.push({ kind: 'in', text: message, timestamp: Date.now() })
+    chatHistory.push({
+      kind: 'in',
+      text: message,
+      timestamp: Date.now(),
+      replyCount: agentReplyCount(),
+    })
     chatOffset = 0
     chatAutoFollowing = true
     screen = 'chat'

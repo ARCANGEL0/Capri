@@ -8,7 +8,7 @@ export const REVIEW_VISIBLE_LINES = 7
 export function reviewTranscriptLines(transcript: string): string[] {
   return (transcript || 'No transcript was captured.')
     .split('\n')
-    .flatMap((line) => wrapLine(line, 50))
+    .flatMap((line) => wrapLine(line))
 }
 
 export function reviewBody(

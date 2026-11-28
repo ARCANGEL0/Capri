@@ -32,7 +32,7 @@ try {
   })
   const { AgentOutput } = await import(pathToFileURL(join(dir, 'agent-output.js')).href)
   const { presentAgentScreen } = await import(pathToFileURL(join(dir, 'agent-presentation.js')).href)
-  const { maxScrollOffset, pageFromEnd, transcriptLines: turnLines } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
+  const { maxScrollOffset, pageFromEnd, transcriptLines: turnLines, turnTranscript, wrapLine, CHAT_WIDTH_PX, MAX_BODY_LINES } = await import(pathToFileURL(join(dir, 'chat-view.js')).href)
   const { maxReviewOffset, reviewBody } = await import(pathToFileURL(join(dir, 'review-text.js')).href)
   const { sortSessionsByLastUsed, updatedAtMs } = await import(pathToFileURL(join(dir, 'session-order.js')).href)
   const { draftTextForSubmit } = await import(pathToFileURL(join(dir, 'phone-draft.js')).href)
@@ -133,6 +133,34 @@ try {
     turnLines(['first', 'second'], ['reply one', 'reply two']),
     ['YOU> first', 'AGENT> reply one', 'YOU> second', 'AGENT> reply two'],
   )
+
+  // A reply still streaming when you send must stay above the new YOU> line,
+  // and the new message must be the bottom line until its own reply arrives.
+  assert.deepEqual(
+    turnTranscript(
+      [{ text: 'first', replyCount: 0 }, { text: 'second', replyCount: 1 }],
+      ['reply one'],
+    ),
+    ['YOU> first', 'AGENT> reply one', 'YOU> second'],
+  )
+  assert.deepEqual(
+    turnTranscript(
+      [{ text: 'first', replyCount: 0 }, { text: 'second', replyCount: 1 }],
+      ['reply one', 'reply two'],
+    ),
+    ['YOU> first', 'AGENT> reply one', 'YOU> second', 'AGENT> reply two'],
+  )
+  assert.deepEqual(
+    turnTranscript([{ text: 'only', replyCount: 0 }], [], ['YOU> older']),
+    ['YOU> older', 'YOU> only'],
+  )
+
+  // Wrapping uses real Even glyph pixels, not a guessed character count, so a
+  // line cannot wrap twice and push the bottom row under the footer divider.
+  const wrapped = wrapLine('YOU> ' + 'wide lettering '.repeat(12))
+  assert.ok(wrapped.length > 1)
+  assert.equal(MAX_BODY_LINES, 6)
+  assert.ok(CHAT_WIDTH_PX <= 560)
 
   // Review is text-only: action rows stay visible while the transcript pages.
   const actions = [{ label: '> Send' }, { label: '  Cancel' }]
