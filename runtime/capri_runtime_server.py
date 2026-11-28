@@ -324,6 +324,31 @@ def codex_update_prompt_output(text):
     )
 
 
+def agent_input_ready(session):
+    """Check whether typed text would become a chat turn instead of a queued input."""
+    if session.done or session.process.poll() is not None:
+        return False, "Session closed"
+    if session.approval:
+        return False, "Approval needed"
+    if session.kind == "terminal":
+        return True, ""
+    tail = session.recent_output()
+    if not tail:
+        return False, "Session still starting"
+    recent = tail[-600:]
+    # Claude's spinner frames mean a turn is in flight; anything typed now is
+    # stored in its queue instead of being submitted as a user message.
+    if re.search(r"[✶✻✽✢]", recent):
+        return False, "Agent is working"
+    if re.search(r"(?i)\d+[.)]\s+\S.{0,90}(enter continue|esc quit|choose|select)", recent):
+        return False, "Choose an option first"
+    if "❯" not in recent and not re.search(r"(?:^|\s)>\s*$", recent):
+        return False, "Input prompt not visible"
+    if time.time() - session.last_output_at < 0.7:
+        return False, "Screen still updating"
+    return True, ""
+
+
 def detect_approval(agent, text):
     excerpt = re.sub(r"\s+", " ", text[-2500:]).strip()
     lower = excerpt.lower()
@@ -412,23 +437,43 @@ def message_text(value):
     return ""
 
 
-def read_json_lines(path, max_bytes=65536):
+def parse_json_lines(raw):
     records = []
+    for line in raw.splitlines():
+        if len(line) > 250000:
+            continue
+        try:
+            item = json.loads(line)
+        except (json.JSONDecodeError, UnicodeDecodeError):
+            continue
+        if isinstance(item, dict):
+            records.append(item)
+    return records
+
+
+def read_json_lines(path, max_bytes=65536):
     try:
         with path.open("rb") as stream:
             raw = stream.read(max_bytes)
-        for line in raw.splitlines():
-            if len(line) > 250000:
-                continue
-            try:
-                item = json.loads(line)
-            except (json.JSONDecodeError, UnicodeDecodeError):
-                continue
-            if isinstance(item, dict):
-                records.append(item)
     except OSError:
-        pass
-    return records
+        return []
+    return parse_json_lines(raw)
+
+
+def read_json_lines_tail(path, max_bytes=2_000_000):
+    """Read the newest records without scanning a multi-hundred-MB transcript."""
+    try:
+        with path.open("rb") as stream:
+            stream.seek(0, os.SEEK_END)
+            size = stream.tell()
+            start = max(0, size - max_bytes)
+            stream.seek(start)
+            raw = stream.read()
+        if start and b"\n" in raw:
+            raw = raw.split(b"\n", 1)[1]  # discard the partial first line
+    except OSError:
+        return []
+    return parse_json_lines(raw)
 
 
 def claude_session_roots():
@@ -619,7 +664,7 @@ def claude_history(session_id):
     if path is None:
         return []
     turns = []
-    for record in read_json_lines(path, 2_000_000):
+    for record in read_json_lines_tail(path, 4_000_000):
         role = str(record.get("type") or "")
         if role not in ("user", "assistant"):
             continue
@@ -655,7 +700,7 @@ def codex_history(session_id):
     if path is None:
         return []
     turns = []
-    for record in read_json_lines(path, 2_000_000):
+    for record in read_json_lines_tail(path, 4_000_000):
         payload = record.get("payload") or record
         if payload.get("type") != "message":
             continue
@@ -1391,14 +1436,25 @@ class Handler(http.server.BaseHTTPRequestHandler):
                 if not text or len(text) > 12000:
                     self.send_json(*api_error("Input is empty or too long"))
                     return
-                print(f"Capri input -> {session.agent}/{session.saved_id or session.id}: {text.strip()[:160]!r}", flush=True)
-                # A TUI reads one PTY write as a paste. If the trailing newline
-                # arrives inside that paste it is inserted as text, not treated
-                # as Enter, so the message sits in the composer forever. Send
-                # the body and the Enter keystroke as separate writes.
+                # Typing into a busy harness only queues the text; it never
+                # becomes a user turn. Wait briefly for the idle prompt, then
+                # report a real failure instead of claiming the send succeeded.
+                if session.kind == "agent":
+                    deadline = time.monotonic() + 8
+                    while True:
+                        ready, reason = agent_input_ready(session)
+                        if ready:
+                            break
+                        if time.monotonic() >= deadline:
+                            self.send_json(409, {"error": f"Agent busy: {reason}. Wait for the prompt, then resend."})
+                            return
+                        time.sleep(0.3)
                 payload = text.rstrip("\r\n")
                 before = session.recent_output()
+                print(f"Capri input -> {session.agent}/{session.saved_id or session.id}: {payload.strip()[:160]!r}", flush=True)
                 print(f"Capri prompt before input: {before!r}", flush=True)
+                # A TUI reads one PTY write as a paste. Send the body and the
+                # Enter keystroke separately so it is submitted, not inserted.
                 session.write(payload)
                 time.sleep(0.12)
                 session.write("\r")
